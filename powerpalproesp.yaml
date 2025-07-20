@@ -12,8 +12,11 @@ esp32:
     type: esp-idf
 
 external_components:
-  - source: ./custom_components
-    components: [powerpal_ble]
+  - source:
+      type: git
+      url: https://github.com/gurrier/esphome-powerpal_ble.git
+      ref: 1.0.0   # or “main” for bleeding edge
+    components: [ powerpal_ble ]
 
 time:
   - platform: homeassistant
