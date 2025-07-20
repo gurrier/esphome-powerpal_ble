@@ -1,0 +1,95 @@
+esphome:
+  name: powerpal-gateway
+  friendly_name: Powerpal Gateway
+  on_boot:
+    then:
+      - lambda: |-
+          id(powerpal_ble_sensor)->daily_pulses_ = id(powerpal_daily_pulses_backup);
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: ./custom_components
+    components: [powerpal_ble]
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+ble_client:
+  - mac_address: XX:XX:XX:XX:XX:XX # << EDIT HERE
+    id: powerpal
+
+button:
+  - platform: restart
+    name: "Restart"
+    icon: "mdi:restart"
+
+globals:
+  - id: powerpal_daily_pulses_backup
+    type: int
+    restore_value: true
+
+http_request:
+  id: powerpal_cloud_uploader
+  verify_ssl: false
+
+sensor:
+  - platform: powerpal_ble
+    id: powerpal_ble_sensor
+    ble_client_id: powerpal
+    # your Powerpal sensors:
+    power:
+      name: "Powerpal Power"
+    battery_level:
+      name: "Powerpal Battery"
+    daily_energy:
+      name: "Powerpal Daily Energy"
+    daily_pulses:
+      name: "Powerpal Daily Pulses"
+    energy:
+      name: "Powerpal Total Energy"
+    watt_hours:
+      name: "Powerpal Watt Hours"
+    pulses:
+      name: "Powerpal Pulses"
+    timestamp:
+      name: "Powerpal Timestamp"
+    cost:
+      name: "Powerpal Cost"
+    pairing_code: 123456  # << EDIT HERE
+    notification_interval: 1
+    pulses_per_kwh: 1000
+    time_id: homeassistant_time
+
+  - platform: homeassistant
+    id: ha_daily_pulses
+    entity_id: sensor.powerpal_daily_pulses
+    on_value:
+      then:
+        - globals.set:
+            id: powerpal_daily_pulses_backup
+            value: !lambda 'return int(x);'
+
+logger:
+
+api:
+  encryption:
+    key: !secret esphome_api_encryption_key
+
+ota:
+  platform: esphome
+  password: "XXXXXXXXXXXXXXXXXXXXX" # << EDIT HERE
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Powerpal Fallback Hotspot"
+    password: "XXXXXXXX" # << EDIT HERE
+
+preferences:
+  flash_write_interval: 10min

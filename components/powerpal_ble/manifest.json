@@ -1,0 +1,8 @@
+{
+  "domain": "powerpal_ble",
+  "dependencies": ["ble_client"],
+  "codeowners": ["@gurrier"],
+  "name": "Powerpal BLE",
+  "version": "1.0",
+  "platforms": ["sensor"]
+}
