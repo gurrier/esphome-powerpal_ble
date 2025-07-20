@@ -4,7 +4,7 @@ esphome:
   on_boot:
     then:
       - lambda: |-
-          id(powerpal_ble_sensor)->daily_pulses_ = id(powerpal_daily_pulses_backup);
+          id(powerpal_ble_sensor)->daily_pulses_ = id(powerpal_daily_pulses_backup); // restore last known daily pulses into the C++ member
 
 esp32:
   board: esp32dev
@@ -53,6 +53,12 @@ sensor:
       name: "Powerpal Daily Energy"
     daily_pulses:
       name: "Powerpal Daily Pulses"
+      # ← hook into "on_value" so we save each update automatically
+      on_value:
+        then:
+          - globals.set:
+              id: powerpal_daily_pulses_backup
+              value: !lambda 'return int(x);'
     energy:
       name: "Powerpal Total Energy"
     watt_hours:
@@ -67,15 +73,6 @@ sensor:
     notification_interval: 1
     pulses_per_kwh: 1000
     time_id: homeassistant_time
-
-  - platform: homeassistant
-    id: ha_daily_pulses
-    entity_id: sensor.powerpal_daily_pulses
-    on_value:
-      then:
-        - globals.set:
-            id: powerpal_daily_pulses_backup
-            value: !lambda 'return int(x);'
 
 logger:
 
