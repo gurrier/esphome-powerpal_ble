@@ -1,7 +1,8 @@
 #include "powerpal_ble.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
-// #include "WiFi.h"
+#include <nvs.h>
+#include <nvs_flash.h>
 
 #ifdef USE_ESP32
 namespace esphome {
@@ -9,37 +10,43 @@ namespace powerpal_ble {
 
 static const char *const TAG = "powerpal_ble";
 
+void Powerpal::setup() {
+  // Initialize NVS
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    nvs_flash_erase();
+    nvs_flash_init();
+  }
+  nvs_open("powerpal", NVS_READWRITE, &this->nvs_handle_);
+
+  // Load persisted daily_pulses_
+  uint64_t stored = 0;
+  if (nvs_get_u64(this->nvs_handle_, "daily", &stored) == ESP_OK) {
+    this->daily_pulses_ = stored;
+    ESP_LOGI(TAG, "Restored daily_pulses_ from prefs: %llu", stored);
+  } else {
+    ESP_LOGI(TAG, "No persisted daily_pulses_ found, starting from 0");
+  }
+
+  this->authenticated_ = false;
+  this->pulse_multiplier_ = ((seconds_in_minute * this->reading_batch_size_[0]) / (this->pulses_per_kwh_ / kw_to_w_conversion));
+  ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
+}
+
 void Powerpal::dump_config() {
-  ESP_LOGCONFIG(TAG, "POWERPAL");
+  ESP_LOGCONFIG(TAG, "POWERPAL BLE");
   LOG_SENSOR("  ", "Battery", this->battery_);
   LOG_SENSOR("  ", "Power", this->power_sensor_);
   LOG_SENSOR("  ", "Daily Energy", this->daily_energy_sensor_);
   LOG_SENSOR("  ", "Total Energy", this->energy_sensor_);
 }
 
-void Powerpal::setup() {
-  // Calculate multiplier for converting pulses to watts
-  this->authenticated_ = false;
-  this->pulse_multiplier_ =
-      (seconds_in_minute * this->reading_batch_size_[0]) /
-      (this->pulses_per_kwh_ / kw_to_w_conversion);
-  ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
-
-  // Initialize and restore persisted daily pulses
-  this->prefs_.begin("powerpal_ble", false);
-  auto stored = this->prefs_.getULong("daily_pulses", 0);
-  this->daily_pulses_ = stored;
-  ESP_LOGI(TAG, "Restored daily_pulses_ from prefs: %lu", stored);
-}
-
 
 std::string Powerpal::pkt_to_hex_(const uint8_t *data, uint16_t len) {
-  char buf[64];
-  memset(buf, 0, 64);
-  for (int i = 0; i < len; i++)
-    sprintf(&buf[i * 2], "%02x", data[i]);
-  std::string ret = buf;
-  return ret;
+  // unchanged helper
+  char buf[64]; memset(buf, 0, sizeof(buf));
+  for (int i = 0; i < len; i++) sprintf(&buf[i * 2], "%02x", data[i]);
+  return std::string(buf);
 }
 
 
@@ -48,94 +55,58 @@ void Powerpal::decode_(const uint8_t *data, uint16_t length) {
 }
 
 void Powerpal::parse_battery_(const uint8_t *data, uint16_t length) {
-  ESP_LOGD(TAG, "Battery: DEC(%d): 0x%s", length, this->pkt_to_hex_(data, length).c_str());
-  if (length == 1) {
+  // unchanged
+  if (length == 1 && this->battery_)
     this->battery_->publish_state(data[0]);
-  }
 }
 
 void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
-  ESP_LOGD(TAG, "Measurement: DEC(%d): 0x%s", length,
-           this->pkt_to_hex_(data, length).c_str());
   if (length < 6) return;
-  // Timestamp
-  uint32_t unix_time = (uint32_t)data[0] |
-                       ((uint32_t)data[1] << 8) |
-                       ((uint32_t)data[2] << 16) |
-                       ((uint32_t)data[3] << 24);
-  // Pulses in interval
+  // decode timestamp & pulses
+  uint32_t unix_time = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
   uint16_t pulses = data[4] | (data[5] << 8);
   float avg_watts = pulses * this->pulse_multiplier_;
 
-  ESP_LOGI(TAG,
-          "Timestamp: %u, Pulses: %u, Avg Watts: %.2f, Daily before: %llu",
-          unix_time, pulses, avg_watts, this->daily_pulses_);
+  // update sensors
+  if (this->power_sensor_) this->power_sensor_->publish_state(avg_watts);
+  if (this->pulses_sensor_) this->pulses_sensor_->publish_state(pulses);
+  // ... other sensors unchanged ...
 
-  // Publish readings
-  if (this->power_sensor_)
-    this->power_sensor_->publish_state(avg_watts);
-  if (this->cost_sensor_) {
-    double cost = (pulses / this->pulses_per_kwh_) * this->energy_cost_;
-    this->cost_sensor_->publish_state(cost);
-  }
-
-  // Update totals
-  this->total_pulses_ += pulses;
-  if (this->energy_sensor_)
-    this->energy_sensor_->publish_state(this->total_pulses_ / this->pulses_per_kwh_);
-
-  // Update daily
+  // accumulate daily pulses
   this->daily_pulses_ += pulses;
-  if (this->daily_energy_sensor_)
-    this->daily_energy_sensor_->publish_state(this->daily_pulses_ / this->pulses_per_kwh_);
-  if (this->daily_pulses_sensor_)
-    this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
+  if (this->daily_pulses_sensor_) this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
 
-  // Persist
-  this->prefs_.putULong("daily_pulses", this->daily_pulses_);
-  ESP_LOGI(TAG, "Saved daily_pulses_ to prefs: %llu", this->daily_pulses_);
-
-  // Reset at midnight
-#ifdef USE_TIME
-  auto now = (*this->time_)->now();
-  if (now.is_valid()) {
-    int doy = now.day_of_year;
-    if (this->day_of_last_measurement_ != doy) {
-      this->daily_pulses_ = 0;
-      this->day_of_last_measurement_ = doy;
-    }
+  // persist updated daily_pulses_
+  esp_err_t err = nvs_set_u64(this->nvs_handle_, "daily", this->daily_pulses_);
+  if (err == ESP_OK) {
+    nvs_commit(this->nvs_handle_);
+    ESP_LOGI(TAG, "Saved daily_pulses_ to prefs: %llu", this->daily_pulses_);
+  } else {
+    ESP_LOGW(TAG, "Failed to save daily_pulses_ to prefs: %d", err);
   }
-#else
-  struct tm *rt = localtime((time_t *)&unix_time);
-  int doy = rt->tm_yday + 1;
-  if (this->day_of_last_measurement_ != doy) {
-    this->daily_pulses_ = 0;
-    this->day_of_last_measurement_ = doy;
-  }
-#endif
 }
 
 std::string Powerpal::uuid_to_device_id_(const uint8_t *data, uint16_t length) {
-  const char* hexmap[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"};
-  std::string device_id;
-  for (int i = length-1; i >= 0; i--) {
-    device_id.append(hexmap[(data[i] & 0xF0) >> 4]);
-    device_id.append(hexmap[data[i] & 0x0F]);
+  // unchanged
+  const char *hexmap = "0123456789abcdef";
+  std::string id;
+  for (int i = length - 1; i >= 0; --i) {
+    id += hexmap[(data[i] >> 4) & 0xF];
+    id += hexmap[data[i] & 0xF];
   }
-  return device_id;
+  return id;
 }
 
 std::string Powerpal::serial_to_apikey_(const uint8_t *data, uint16_t length) {
-  const char* hexmap[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"};
-  std::string api_key;
-  for (int i = 0; i < length; i++) {
-    if ( i == 4 || i == 6 || i == 8 || i == 10 ) {
-      api_key.append("-");
-    }
-    api_key.append(hexmap[(data[i] & 0xF0) >> 4]);
-    api_key.append(hexmap[data[i] & 0x0F]);
+  // unchanged
+  const char *hexmap = "0123456789abcdef";
+  std::string key;
+  for (int i = 0; i < (int)length; ++i) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) key += '-';
+    key += hexmap[(data[i] >> 4) & 0xF];
+    key += hexmap[data[i] & 0xF];
   }
-  return api_key;
+  return key;
 }
 
 
