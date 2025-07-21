@@ -11,16 +11,25 @@ static const char *const TAG = "powerpal_ble";
 
 void Powerpal::dump_config() {
   ESP_LOGCONFIG(TAG, "POWERPAL");
-  LOG_SENSOR(" ", "Battery", this->battery_);
-  LOG_SENSOR(" ", "Power", this->power_sensor_);
-  LOG_SENSOR(" ", "Daily Energy", this->daily_energy_sensor_);
-  LOG_SENSOR(" ", "Total Energy", this->energy_sensor_);
-  }
+  LOG_SENSOR("  ", "Battery", this->battery_);
+  LOG_SENSOR("  ", "Power", this->power_sensor_);
+  LOG_SENSOR("  ", "Daily Energy", this->daily_energy_sensor_);
+  LOG_SENSOR("  ", "Total Energy", this->energy_sensor_);
+}
 
 void Powerpal::setup() {
+  // Calculate multiplier for converting pulses to watts
   this->authenticated_ = false;
-  this->pulse_multiplier_ = ((seconds_in_minute * this->reading_batch_size_[0]) / (this->pulses_per_kwh_ / kw_to_w_conversion));
-  ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_ );
+  this->pulse_multiplier_ =
+      (seconds_in_minute * this->reading_batch_size_[0]) /
+      (this->pulses_per_kwh_ / kw_to_w_conversion);
+  ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
+
+  // Initialize and restore persisted daily pulses
+  this->prefs_.begin("powerpal_ble", false);
+  auto stored = this->prefs_.getULong("daily_pulses", 0);
+  this->daily_pulses_ = stored;
+  ESP_LOGI(TAG, "Restored daily_pulses_ from prefs: %lu", stored);
 }
 
 
@@ -46,90 +55,64 @@ void Powerpal::parse_battery_(const uint8_t *data, uint16_t length) {
 }
 
 void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
-  ESP_LOGD(TAG, "Meaurement: DEC(%d): 0x%s", length, this->pkt_to_hex_(data, length).c_str());
-  if (length >= 6) {
-    time_t unix_time = data[0];
-    unix_time += (data[1] << 8);
-    unix_time += (data[2] << 16);
-    unix_time += (data[3] << 24);
-    long int new_time = unix_time;
-    //
-        uint16_t pulses_within_interval = data[4];
-    pulses_within_interval += data[5] << 8;
-    
-    // float total_kwh_within_interval = pulses_within_interval / this->pulses_per_kwh_;
-    float avg_watts_within_interval = pulses_within_interval * this->pulse_multiplier_;
-    
-    ESP_LOGI(TAG, "Timestamp: %ld, Pulses: %d, Average Watts within interval: %f W, Daily Pulses: %d", unix_time, pulses_within_interval,
-             avg_watts_within_interval, daily_pulses_);
+  ESP_LOGD(TAG, "Measurement: DEC(%d): 0x%s", length,
+           this->pkt_to_hex_(data, length).c_str());
+  if (length < 6) return;
+  // Timestamp
+  uint32_t unix_time = (uint32_t)data[0] |
+                       ((uint32_t)data[1] << 8) |
+                       ((uint32_t)data[2] << 16) |
+                       ((uint32_t)data[3] << 24);
+  // Pulses in interval
+  uint16_t pulses = data[4] | (data[5] << 8);
+  float avg_watts = pulses * this->pulse_multiplier_;
 
-    if (this->power_sensor_ != nullptr) {
-      this->power_sensor_->publish_state(avg_watts_within_interval);
-      //
-    }
+  ESP_LOGI(TAG,
+          "Timestamp: %u, Pulses: %u, Avg Watts: %.2f, Daily before: %llu",
+          unix_time, pulses, avg_watts, this->daily_pulses_);
 
-    if (this->cost_sensor_ != nullptr) {
-      double mycost = (pulses_within_interval / this->pulses_per_kwh_) * this->energy_cost_;
-      this->cost_sensor_->publish_state(mycost);
-    }
-
-    if (this->pulses_sensor_ != nullptr) {
-       this->pulses_sensor_->publish_state(pulses_within_interval);
-    }
-
-    if (this->watt_hours_sensor_ != nullptr) {
-      int mywatt_hrs = (uint32_t)roundf(pulses_within_interval * (this->pulses_per_kwh_ / kw_to_w_conversion));
-       this->watt_hours_sensor_->publish_state(mywatt_hrs);
-    }
-     if (this->timestamp_sensor_ != nullptr) {
-      //int mywatt_hrs = (uint32_t)roundf(pulses_within_interval * (this->pulses_per_kwh_ / kw_to_w_conversion));
-       this->timestamp_sensor_->publish_state(new_time);
-    }
-    if (this->energy_sensor_ != nullptr) {
-      this->total_pulses_ += pulses_within_interval;
-      float energy = this->total_pulses_ / this->pulses_per_kwh_;
-      this->energy_sensor_->publish_state(energy);
-    }
-
-    if (this->daily_energy_sensor_ != nullptr) {
-      // even if new day, publish last measurement window before resetting
-      this->daily_pulses_ += pulses_within_interval;
-      float energy = this->daily_pulses_ / this->pulses_per_kwh_;
-      this->daily_energy_sensor_->publish_state(energy);
-      
-      if (this->daily_pulses_sensor_ != nullptr) {
-      this->daily_pulses_sensor_->publish_state(daily_pulses_);
-      }
-      // if esphome device has a valid time component set up, use that (preferred)
-      // else, use the powerpal measurement timestamps
-#ifdef USE_TIME
-      auto *time_ = *this->time_;
-      esphome::ESPTime date_of_measurement = time_->now();
-      if (date_of_measurement.is_valid()) {
-        if (this->day_of_last_measurement_ == 0) { this->day_of_last_measurement_ = date_of_measurement.day_of_year;}
-        else if (this->day_of_last_measurement_ != date_of_measurement.day_of_year) {
-          this->daily_pulses_ = 0;
-          this->day_of_last_measurement_ = date_of_measurement.day_of_year;
-        }
-      } else {
-        // if !date_of_measurement.is_valid(), user may have a bare "time:" in their yaml without a specific platform selected, so fallback to date of powerpal measurement
-#else
-        // avoid using ESPTime here so we don't need a time component in the config
-        struct tm *date_of_measurement = ::localtime(&unix_time);
-        // date_of_measurement.tm_yday + 1 because we are matching ESPTime day of year (1-366 instead of 0-365), which lets us catch a day_of_last_measurement_ of 0 as uninitialised
-        if (this->day_of_last_measurement_ == 0) { this->day_of_last_measurement_ = date_of_measurement->tm_yday + 1 ;}
-        else if (this->day_of_last_measurement_ != date_of_measurement->tm_yday + 1) {
-          this->daily_pulses_ = 0;
-          this->day_of_last_measurement_ = date_of_measurement->tm_yday + 1;
-        }
-#endif
-#ifdef USE_TIME
-      }
-#endif
-    }
-
-
+  // Publish readings
+  if (this->power_sensor_)
+    this->power_sensor_->publish_state(avg_watts);
+  if (this->cost_sensor_) {
+    double cost = (pulses / this->pulses_per_kwh_) * this->energy_cost_;
+    this->cost_sensor_->publish_state(cost);
   }
+
+  // Update totals
+  this->total_pulses_ += pulses;
+  if (this->energy_sensor_)
+    this->energy_sensor_->publish_state(this->total_pulses_ / this->pulses_per_kwh_);
+
+  // Update daily
+  this->daily_pulses_ += pulses;
+  if (this->daily_energy_sensor_)
+    this->daily_energy_sensor_->publish_state(this->daily_pulses_ / this->pulses_per_kwh_);
+  if (this->daily_pulses_sensor_)
+    this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
+
+  // Persist
+  this->prefs_.putULong("daily_pulses", this->daily_pulses_);
+  ESP_LOGI(TAG, "Saved daily_pulses_ to prefs: %llu", this->daily_pulses_);
+
+  // Reset at midnight
+#ifdef USE_TIME
+  auto now = (*this->time_)->now();
+  if (now.is_valid()) {
+    int doy = now.day_of_year;
+    if (this->day_of_last_measurement_ != doy) {
+      this->daily_pulses_ = 0;
+      this->day_of_last_measurement_ = doy;
+    }
+  }
+#else
+  struct tm *rt = localtime((time_t *)&unix_time);
+  int doy = rt->tm_yday + 1;
+  if (this->day_of_last_measurement_ != doy) {
+    this->daily_pulses_ = 0;
+    this->day_of_last_measurement_ = doy;
+  }
+#endif
 }
 
 std::string Powerpal::uuid_to_device_id_(const uint8_t *data, uint16_t length) {
