@@ -164,53 +164,41 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       break;
     }
     case ESP_GATTC_SEARCH_CMPL_EVT: {
-      // auto *pairing_code_char_ = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID,
-      // POWERPAL_CHARACTERISTIC_PAIRING_CODE_UUID); if (pairing_code_char_ == nullptr) {
-      //   ESP_LOGE(TAG, "[%s] No Powerpal service or Pairing Code Characteristic found at device, not a POWERPAL..?",
-      //             this->parent_->address_str().c_str());
-      //   break;
-      // } else {
-      //   this->pairing_code_char_handle_ = pairing_code_char_->handle;
-      // }
+      ESP_LOGI(TAG, "POWERPAL: services discovered, looking up characteristic handles…");
 
-      // auto *reading_batch_size_char_ = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID,
-      // POWERPAL_CHARACTERISTIC_READING_BATCH_SIZE_UUID); if (reading_batch_size_char_ == nullptr) {
-      //   ESP_LOGE(TAG, "[%s] No Powerpal service or Reading Batch Size Characteristic found at device, not a
-      //   POWERPAL..?",
-      //             this->parent_->address_str().c_str());
-      //   break;
-      // } else {
-      //   this->reading_batch_size_char_handle_ = reading_batch_size_char_->handle;
-      // }
+      // Pairing Code
+      if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_PAIRING_CODE_UUID)) {
+        this->pairing_code_char_handle_ = ch->handle;
+        ESP_LOGI(TAG, "  → pairing_code handle = 0x%02x", ch->handle);
+      } else {
+        ESP_LOGE(TAG, "  ! pairing_code characteristic not found");
+      }
 
-      // auto *measurement_char_ = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID,
-      // POWERPAL_CHARACTERISTIC_MEASUREMENT_UUID); if (measurement_char_ == nullptr) {
-      //   ESP_LOGE(TAG, "[%s] No Powerpal service or Measurement Characteristic found at device, not a POWERPAL..?",
-      //             this->parent_->address_str().c_str());
-      //   break;
-      // } else {
-      //   this->measurement_char_handle_ = measurement_char_->handle;
-      // }
+      // Reading Batch Size
+      if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_READING_BATCH_SIZE_UUID)) {
+        this->reading_batch_size_char_handle_ = ch->handle;
+        ESP_LOGI(TAG, "  → reading_batch_size handle = 0x%02x", ch->handle);
+      } else {
+        ESP_LOGE(TAG, "  ! reading_batch_size characteristic not found");
+      }
 
-      // auto *uuid_char_ = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID,
-      // POWERPAL_CHARACTERISTIC_UUID_UUID); if (uuid_char_ == nullptr) {
-      //   ESP_LOGE(TAG, "[%s] No Powerpal service or Measurement Characteristic found at device, not a POWERPAL..?",
-      //             this->parent_->address_str().c_str());
-      //   break;
-      // } else {
-      //   this->uuid_char_handle_ = uuid_char_->handle;
-      //   ESP_LOGE(TAG, "UUID HANDLE: %d",this->uuid_char_handle_);
-      // }
+      // Measurement
+      if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_MEASUREMENT_UUID)) {
+        this->measurement_char_handle_ = ch->handle;
+        ESP_LOGI(TAG, "  → measurement handle = 0x%02x", ch->handle);
+      } else {
+        ESP_LOGE(TAG, "  ! measurement characteristic not found");
+      }
 
-      // auto *serial_char_ = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID,
-      // POWERPAL_CHARACTERISTIC_SERIAL_UUID); if (serial_char_ == nullptr) {
-      //   ESP_LOGE(TAG, "[%s] No Powerpal service or Measurement Characteristic found at device, not a POWERPAL..?",
-      //             this->parent_->address_str().c_str());
-      //   break;
-      // } else {
-      //   this->serial_number_char_handle_ = serial_char_->handle;
-      //   ESP_LOGE(TAG, "SERIAL HANDLE: %d",this->serial_number_char_handle_);
-      // }
+      // (optional) UUID & serial if you need them:
+      if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_UUID_UUID)) {
+        this->uuid_char_handle_ = ch->handle;
+        ESP_LOGI(TAG, "  → uuid handle = 0x%02x", ch->handle);
+      }
+      if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_SERIAL_UUID)) {
+        this->serial_number_char_handle_ = ch->handle;
+        ESP_LOGI(TAG, "  → serial handle = 0x%02x", ch->handle);
+      }
 
       break;
     }
@@ -251,7 +239,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
 
       // battery
       if (param->read.handle == this->battery_char_handle_) {
-        ESP_LOGD(TAG, "Reeieved battery read event");
+        ESP_LOGD(TAG, "Received battery read event");
         this->parse_battery_(param->read.value, param->read.value_len);
         break;
       }
