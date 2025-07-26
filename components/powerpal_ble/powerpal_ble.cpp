@@ -1,7 +1,9 @@
 #include "powerpal_ble.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
-// #include "WiFi.h"
+
+#include <nvs_flash.h>
+#include <nvs.h>
 
 #ifdef USE_ESP32
 namespace esphome {
@@ -9,28 +11,77 @@ namespace powerpal_ble {
 
 static const char *const TAG = "powerpal_ble";
 
+
 void Powerpal::dump_config() {
   ESP_LOGCONFIG(TAG, "POWERPAL");
-  LOG_SENSOR("  ", "Battery", this->battery_);
-  LOG_SENSOR("  ", "Power", this->power_sensor_);
-  LOG_SENSOR("  ", "Daily Energy", this->daily_energy_sensor_);
-  LOG_SENSOR("  ", "Total Energy", this->energy_sensor_);
-}
+  LOG_SENSOR(" ", "Battery", this->battery_);
+  LOG_SENSOR(" ", "Power", this->power_sensor_);
+  LOG_SENSOR(" ", "Daily Energy", this->daily_energy_sensor_);
+  LOG_SENSOR(" ", "Total Energy", this->energy_sensor_);
+  }
 
 void Powerpal::setup() {
-  // Calculate multiplier for converting pulses to watts
   this->authenticated_ = false;
-  this->pulse_multiplier_ =
-      (seconds_in_minute * this->reading_batch_size_[0]) /
-      (this->pulses_per_kwh_ / kw_to_w_conversion);
-  ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
+  this->pulse_multiplier_ = ((seconds_in_minute * this->reading_batch_size_[0]) / (this->pulses_per_kwh_ / kw_to_w_conversion));
+  
+    // ——— NVS init & load ———
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    err = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK(err);
 
-  // Initialize and restore persisted daily pulses
-  this->prefs_.begin("powerpal_ble", false);
-  auto stored = this->prefs_.getULong("daily_pulses", 0);
-  this->daily_pulses_ = stored;
-  ESP_LOGI(TAG, "Restored daily_pulses_ from prefs: %lu", stored);
+  err = nvs_open("powerpal", NVS_READWRITE, &this->nvs_handle_);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "NVS open failed (%d)", err);
+  } else {
+    this->nvs_ok_ = true;
+    uint64_t stored = 0;
+    err = nvs_get_u64(this->nvs_handle_, "daily", &stored);
+    if (err == ESP_OK) {
+      this->daily_pulses_ = stored;
+      ESP_LOGI(TAG, "Loaded daily_pulses: %llu", stored);
+    } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+      ESP_LOGI(TAG, "No stored daily_pulses; starting at zero");
+    } else {
+      ESP_LOGE(TAG, "Error reading daily_pulses (%d)", err);
+    }
+
+    uint64_t stored_total = 0;
+    esp_err_t err = nvs_get_u64(this->nvs_handle_, "total", &stored_total);
+    if (err == ESP_OK) {
+      this->total_pulses_ = stored_total;
+      ESP_LOGI(TAG, "Loaded total_pulses: %llu", stored_total);
+    } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+      ESP_LOGI(TAG, "No stored total_pulses; starting at zero");
+    } else {
+      ESP_LOGE(TAG, "Error reading total_pulses (%d)", err);
+    }
+
+    ESP_LOGI(TAG, "After setup, total_pulses_ = %llu", this->total_pulses_);
+
+  }
+  
+  
+  
+  ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
+  ESP_LOGI(TAG, "Loaded persisted daily_pulses: %llu", this->daily_pulses_);
+
+  // ——— set sensor metadata defaults ———
+  if (this->energy_sensor_) {
+    this->energy_sensor_->set_device_class("energy");
+    this->energy_sensor_->set_state_class(sensor::STATE_CLASS_TOTAL_INCREASING);
+    this->energy_sensor_->set_unit_of_measurement("kWh");
+  }
+  if (this->daily_energy_sensor_) {
+    this->daily_energy_sensor_->set_device_class("energy");
+    this->daily_energy_sensor_->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
+    this->daily_energy_sensor_->set_unit_of_measurement("kWh");
+  }
+
 }
+
 
 
 std::string Powerpal::pkt_to_hex_(const uint8_t *data, uint16_t len) {
@@ -55,65 +106,121 @@ void Powerpal::parse_battery_(const uint8_t *data, uint16_t length) {
 }
 
 void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
-  ESP_LOGD(TAG, "Measurement: DEC(%d): 0x%s", length,
-           this->pkt_to_hex_(data, length).c_str());
-  if (length < 6) return;
-  // Timestamp
-  uint32_t unix_time = (uint32_t)data[0] |
-                       ((uint32_t)data[1] << 8) |
-                       ((uint32_t)data[2] << 16) |
-                       ((uint32_t)data[3] << 24);
-  // Pulses in interval
-  uint16_t pulses = data[4] | (data[5] << 8);
-  float avg_watts = pulses * this->pulse_multiplier_;
+  if (length < 6) {
+    ESP_LOGW(TAG, "parse_measurement_: packet too short (%hu)", length);
+    return;
+  }
 
-  ESP_LOGI(TAG,
-          "Timestamp: %u, Pulses: %u, Avg Watts: %.2f, Daily before: %llu",
-          unix_time, pulses, avg_watts, this->daily_pulses_);
+  // 1) Build UNIX timestamp from bytes [0..3]
+  uint32_t t32 = uint32_t(data[0])
+               | (uint32_t(data[1]) << 8)
+               | (uint32_t(data[2]) << 16)
+               | (uint32_t(data[3]) << 24);
+  time_t unix_time = time_t(t32);
 
-  // Publish readings
+  // 2) Determine day-of-year for rollover
+  int today;
+#ifdef USE_TIME
+  auto *time_comp = *this->time_;
+  auto now = time_comp->now();
+  if (now.is_valid()) {
+    today = now.day_of_year;
+  } else {
+    struct tm *tm_info = ::localtime(&unix_time);
+    today = tm_info->tm_yday + 1;
+  }
+#else
+  struct tm *tm_info = ::localtime(&unix_time);
+  today = tm_info->tm_yday + 1;
+#endif
+
+  // 3) First‐measurement vs midnight‐rollover
+  if (this->day_of_last_measurement_ == 0) {
+    // first callback since reboot → just adopt the loaded value, set the “last day”
+    this->day_of_last_measurement_ = today;
+  }
+  else if (this->day_of_last_measurement_ != today) {
+    // real midnight rollover → clear counters
+    this->day_of_last_measurement_ = today;
+    this->daily_pulses_ = 0;
+    if (this->nvs_ok_) {
+      nvs_erase_key(this->nvs_handle_, "daily");
+      nvs_commit(this->nvs_handle_);
+    }
+  }
+
+  // 4) Read pulse count for this interval
+  uint16_t pulses = uint16_t(data[4]) | (uint16_t(data[5]) << 8);
+
+  // 5) Instantaneous power (W)
+  float power_w = pulses * this->pulse_multiplier_;
   if (this->power_sensor_)
-    this->power_sensor_->publish_state(avg_watts);
+    this->power_sensor_->publish_state(power_w);
+
+  // 6) Cost for this interval
   if (this->cost_sensor_) {
-    double cost = (pulses / this->pulses_per_kwh_) * this->energy_cost_;
+    float cost = (float(pulses) / this->pulses_per_kwh_) * this->energy_cost_;
     this->cost_sensor_->publish_state(cost);
   }
 
-  // Update totals
+  // 7) Raw pulses
+  if (this->pulses_sensor_)
+    this->pulses_sensor_->publish_state(pulses);
+
+  // 8) Watt‑hours for this interval
+  float wh = (float(pulses) / this->pulses_per_kwh_) * 1000.0f;
+  if (this->watt_hours_sensor_)
+    this->watt_hours_sensor_->publish_state((int)roundf(wh));
+
+  // 9) Timestamp
+  if (this->timestamp_sensor_)
+    this->timestamp_sensor_->publish_state((long)unix_time);
+
+  // 10) Total Energy: accumulate, publish, persist
   this->total_pulses_ += pulses;
+  float total_kwh = this->total_pulses_ / this->pulses_per_kwh_;
   if (this->energy_sensor_)
-    this->energy_sensor_->publish_state(this->total_pulses_ / this->pulses_per_kwh_);
+    this->energy_sensor_->publish_state(total_kwh);
+  if (this->nvs_ok_) {
+    esp_err_t err = nvs_set_u64(this->nvs_handle_, "total", this->total_pulses_);
+    ESP_LOGD(TAG, "nvs_set_u64(“total”, %llu) returned %d", this->total_pulses_, err);
 
-  // Update daily
-  this->daily_pulses_ += pulses;
-  if (this->daily_energy_sensor_)
-    this->daily_energy_sensor_->publish_state(this->daily_pulses_ / this->pulses_per_kwh_);
-  if (this->daily_pulses_sensor_)
-    this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
+    if (err == ESP_OK) {
+      ESP_LOGD(TAG, "nvs_commit(“total”) returned %d", err);
 
-  // Persist
-  this->prefs_.putULong("daily_pulses", this->daily_pulses_);
-  ESP_LOGI(TAG, "Saved daily_pulses_ to prefs: %llu", this->daily_pulses_);
+      err = nvs_commit(this->nvs_handle_);
 
-  // Reset at midnight
-#ifdef USE_TIME
-  auto now = (*this->time_)->now();
-  if (now.is_valid()) {
-    int doy = now.day_of_year;
-    if (this->day_of_last_measurement_ != doy) {
-      this->daily_pulses_ = 0;
-      this->day_of_last_measurement_ = doy;
+      uint64_t verify = 0;
+      esp_err_t err2 = nvs_get_u64(this->nvs_handle_, "total", &verify);
+      ESP_LOGI(TAG, "Post‑commit read back total_pulses = %llu (err=%d)", verify, err2);
+
+
+      if (err != ESP_OK)
+        ESP_LOGE(TAG, "NVS commit total failed (%d)", err);
+    } else {
+      ESP_LOGE(TAG, "NVS set_u64 total failed (%d)", err);
     }
   }
-#else
-  struct tm *rt = localtime((time_t *)&unix_time);
-  int doy = rt->tm_yday + 1;
-  if (this->day_of_last_measurement_ != doy) {
-    this->daily_pulses_ = 0;
-    this->day_of_last_measurement_ = doy;
+
+  // 11) Daily Energy: accumulate, publish, persist
+  this->daily_pulses_ += pulses;
+  float daily_kwh = this->daily_pulses_ / this->pulses_per_kwh_;
+  if (this->daily_energy_sensor_)
+    this->daily_energy_sensor_->publish_state(daily_kwh);
+  if (this->nvs_ok_) {
+    esp_err_t err = nvs_set_u64(this->nvs_handle_, "daily", this->daily_pulses_);
+    if (err == ESP_OK) {
+      err = nvs_commit(this->nvs_handle_);
+      if (err != ESP_OK)
+        ESP_LOGE(TAG, "NVS commit daily failed (%d)", err);
+    } else {
+      ESP_LOGE(TAG, "NVS set_u64 daily failed (%d)", err);
+    }
   }
-#endif
+  if (this->daily_pulses_sensor_)
+    this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
 }
+
 
 std::string Powerpal::uuid_to_device_id_(const uint8_t *data, uint16_t length) {
   const char* hexmap[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"};
