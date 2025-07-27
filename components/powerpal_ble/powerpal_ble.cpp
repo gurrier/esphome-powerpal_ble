@@ -112,10 +112,10 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   }
 
   // 1) Build UNIX timestamp from bytes [0..3]
-  uint32_t t32 = uint32_t(data[0])
-               | (uint32_t(data[1]) << 8)
-               | (uint32_t(data[2]) << 16)
-               | (uint32_t(data[3]) << 24);
+  uint32_t t32 = uint32_t(data[0]) |
+                 (uint32_t(data[1]) << 8) |
+                 (uint32_t(data[2]) << 16) |
+                 (uint32_t(data[3]) << 24);
   time_t unix_time = time_t(t32);
 
   // 2) Determine day-of-year for rollover
@@ -134,28 +134,37 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   today = tm_info->tm_yday + 1;
 #endif
 
-  // 3) First‐measurement vs midnight‐rollover
+  // 3) First-measurement vs midnight-rollover
   if (this->day_of_last_measurement_ == 0) {
-    // first callback since reboot → just adopt the loaded value, set the “last day”
     this->day_of_last_measurement_ = today;
-  }
-  else if (this->day_of_last_measurement_ != today) {
-    // real midnight rollover → clear counters
+  } else if (this->day_of_last_measurement_ != today) {
     this->day_of_last_measurement_ = today;
     this->daily_pulses_ = 0;
     if (this->nvs_ok_) {
+      ESP_LOGD(TAG, "NVS rollover commit at day change, resetting daily_pulses");
       nvs_erase_key(this->nvs_handle_, "daily");
       nvs_commit(this->nvs_handle_);
+      this->last_commit_ts_ = millis() / 1000;
+      this->last_pulses_for_threshold_ = this->total_pulses_;
+      ++this->nvsc_commit_count_;
     }
   }
 
   // 4) Read pulse count for this interval
   uint16_t pulses = uint16_t(data[4]) | (uint16_t(data[5]) << 8);
 
-  // 5) Instantaneous power (W)
-  float power_w = pulses * this->pulse_multiplier_;
-  if (this->power_sensor_)
-    this->power_sensor_->publish_state(power_w);
+  // 5) Instantaneous power (W) using actual elapsed time
+  static uint32_t last_timestamp_s = 0;
+  uint32_t interval_s = last_timestamp_s ? (t32 - last_timestamp_s) : 0;
+  last_timestamp_s = t32;
+  if (interval_s == 0) {
+    ESP_LOGD(TAG, "Skipping power calc on first measurement after reboot or rollover");
+  } else {
+    float energy_kwh = float(pulses) / float(this->pulses_per_kwh_);
+    float power_w = (energy_kwh * 3600.0f * 1000.0f) / float(interval_s);
+    if (this->power_sensor_)
+      this->power_sensor_->publish_state(power_w);
+  }
 
   // 6) Cost for this interval
   if (this->cost_sensor_) {
@@ -167,7 +176,7 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   if (this->pulses_sensor_)
     this->pulses_sensor_->publish_state(pulses);
 
-  // 8) Watt‑hours for this interval
+  // 8) Watt-hours for this interval
   float wh = (float(pulses) / this->pulses_per_kwh_) * 1000.0f;
   if (this->watt_hours_sensor_)
     this->watt_hours_sensor_->publish_state((int)roundf(wh));
@@ -176,50 +185,39 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   if (this->timestamp_sensor_)
     this->timestamp_sensor_->publish_state((long)unix_time);
 
-  // 10) Total Energy: accumulate, publish, persist
+  // 10 & 11) Accumulate and throttled NVS commit for Total & Daily Energy
   this->total_pulses_ += pulses;
   float total_kwh = this->total_pulses_ / this->pulses_per_kwh_;
   if (this->energy_sensor_)
     this->energy_sensor_->publish_state(total_kwh);
-  if (this->nvs_ok_) {
-    esp_err_t err = nvs_set_u64(this->nvs_handle_, "total", this->total_pulses_);
-    ESP_LOGD(TAG, "nvs_set_u64(“total”, %llu) returned %d", this->total_pulses_, err);
 
-    if (err == ESP_OK) {
-      ESP_LOGD(TAG, "nvs_commit(“total”) returned %d", err);
-
-      err = nvs_commit(this->nvs_handle_);
-
-      uint64_t verify = 0;
-      esp_err_t err2 = nvs_get_u64(this->nvs_handle_, "total", &verify);
-      ESP_LOGI(TAG, "Post‑commit read back total_pulses = %llu (err=%d)", verify, err2);
-
-
-      if (err != ESP_OK)
-        ESP_LOGE(TAG, "NVS commit total failed (%d)", err);
-    } else {
-      ESP_LOGE(TAG, "NVS set_u64 total failed (%d)", err);
-    }
-  }
-
-  // 11) Daily Energy: accumulate, publish, persist
   this->daily_pulses_ += pulses;
   float daily_kwh = this->daily_pulses_ / this->pulses_per_kwh_;
   if (this->daily_energy_sensor_)
     this->daily_energy_sensor_->publish_state(daily_kwh);
+
   if (this->nvs_ok_) {
-    esp_err_t err = nvs_set_u64(this->nvs_handle_, "daily", this->daily_pulses_);
-    if (err == ESP_OK) {
-      err = nvs_commit(this->nvs_handle_);
+    uint32_t now_s = millis() / 1000;
+    bool time_ok = (now_s - this->last_commit_ts_) >= COMMIT_INTERVAL_S;
+    bool thresh_ok = (this->total_pulses_ - this->last_pulses_for_threshold_) >= PULSE_THRESHOLD;
+    if (time_ok || thresh_ok) {
+      ESP_LOGD(TAG, "NVS THROTTLED commit #%u at %us: total=%llu daily=%llu",
+               ++this->nvsc_commit_count_, now_s,
+               this->total_pulses_, this->daily_pulses_);
+      nvs_set_u64(this->nvs_handle_, "total", this->total_pulses_);
+      nvs_set_u64(this->nvs_handle_, "daily", this->daily_pulses_);
+      esp_err_t err = nvs_commit(this->nvs_handle_);
       if (err != ESP_OK)
-        ESP_LOGE(TAG, "NVS commit daily failed (%d)", err);
-    } else {
-      ESP_LOGE(TAG, "NVS set_u64 daily failed (%d)", err);
+        ESP_LOGE(TAG, "NVS commit failed (%d)", err);
+      this->last_commit_ts_ = now_s;
+      this->last_pulses_for_threshold_ = this->total_pulses_;
     }
   }
+
   if (this->daily_pulses_sensor_)
     this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
 }
+
 
 
 std::string Powerpal::uuid_to_device_id_(const uint8_t *data, uint16_t length) {

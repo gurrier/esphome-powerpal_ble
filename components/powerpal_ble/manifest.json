@@ -3,6 +3,6 @@
   "dependencies": ["ble_client"],
   "codeowners": ["@gurrier"],
   "name": "Powerpal BLE",
-  "version": "2.0",
+  "version": "2.0.2",
   "platforms": ["sensor"]
 }
