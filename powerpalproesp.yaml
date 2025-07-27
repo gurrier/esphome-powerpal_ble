@@ -11,7 +11,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/gurrier/esphome-powerpal_ble.git
-      ref: "Persistence"   # or “main” for bleeding edge
+      ref: "1.2"   # or “main” for bleeding edge
     components: [ powerpal_ble ]
 
 time:
@@ -35,7 +35,6 @@ sensor:
   - platform: powerpal_ble
     id: powerpal_ble_sensor
     ble_client_id: powerpal
-    # your Powerpal sensors:
     power:
       name: "Powerpal Power"
     battery_level:
@@ -55,11 +54,14 @@ sensor:
     cost:
       name: "Powerpal Cost"
     pairing_code: 123456  # << EDIT HERE
-    notification_interval: 1
+    notification_interval: 1 # In seconds
     pulses_per_kwh: 1000
     time_id: homeassistant_time
 
 logger:
+#  level: DEBUG
+#  logs:
+#    powerpal_ble: DEBUG
 
 api:
   encryption:
@@ -75,3 +77,9 @@ wifi:
   ap:
     ssid: "Powerpal Fallback Hotspot"
     password: "XXXXXXXX" # << EDIT HERE
+
+web_server:
+  port: 80
+  auth:
+    username: !secret esphome_web_username
+    password: !secret esphome_web_password

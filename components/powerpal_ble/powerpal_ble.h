@@ -102,6 +102,15 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   uint64_t daily_pulses_{0};
   uint64_t total_pulses_{0};  
 
+  // Throttle state for NVS commits
+  uint32_t last_commit_ts_{0};              // timestamp of last commit (seconds)
+  uint64_t last_pulses_for_threshold_{0};   // total_pulses_ at last commit
+  uint32_t nvsc_commit_count_{0};           // count of NVS commits
+
+  static constexpr uint32_t COMMIT_INTERVAL_S = 60;  // min seconds between commits
+  static constexpr uint64_t PULSE_THRESHOLD   = 100; // min pulses between commits
+
+
   std::string pkt_to_hex_(const uint8_t *data, uint16_t len);
   void decode_(const uint8_t *data, uint16_t length);
   void parse_battery_(const uint8_t *data, uint16_t length);
