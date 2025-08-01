@@ -76,7 +76,7 @@ void Powerpal::setup() {
   }
   if (this->daily_energy_sensor_) {
     this->daily_energy_sensor_->set_device_class("energy");
-    this->daily_energy_sensor_->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
+    this->daily_energy_sensor_->set_state_class(sensor::STATE_CLASS_TOTAL_INCREASING);
     this->daily_energy_sensor_->set_unit_of_measurement("kWh");
   }
 
