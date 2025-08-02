@@ -33,7 +33,7 @@ CONFIG_SCHEMA = cv.Schema({
     cv.Required(CONF_PAIRING_CODE): cv.uint32_t,
     cv.Required(CONF_NOTIFICATION_INTERVAL): cv.uint8_t,
     cv.Required(CONF_PULSES_PER_KWH): cv.float_,
-    cv.Required(CONF_TIME_ID): cv.use_id(time.RealTimeClock),
+    cv.Optional(CONF_TIME_ID): cv.use_id(time.RealTimeClock),
     cv.Optional(CONF_BATTERY): cv.use_id(sensor.Sensor),
     cv.Optional(CONF_POWER_SENSOR): cv.use_id(sensor.Sensor),
     cv.Optional(CONF_ENERGY_SENSOR): cv.use_id(sensor.Sensor),
@@ -59,8 +59,9 @@ async def to_code(config):
     cg.add(var.set_pulses_per_kwh(config[CONF_PULSES_PER_KWH]))
 
     # time
-    time_obj = await cg.get_variable(config[CONF_TIME_ID])
-    cg.add(var.set_time(time_obj))
+    if CONF_TIME_ID in config:
+        time_obj = await cg.get_variable(config[CONF_TIME_ID])
+        cg.add(var.set_time(time_obj))
 
     # Optional sensors — **each** goes through get_variable()
     if CONF_BATTERY in config:
