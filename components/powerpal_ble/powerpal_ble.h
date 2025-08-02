@@ -146,9 +146,9 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
 
   uint8_t stored_measurements_count_{0};
   std::vector<PowerpalMeasurement> stored_measurements_;
-  std::string powerpal_device_id_; 
-  std::string powerpal_apikey_; 
-  double energy_cost_;
+  std::string powerpal_device_id_;
+  std::string powerpal_apikey_;
+  double energy_cost_{0.0};
 
   uint16_t pairing_code_char_handle_ = 0x2e;
   uint16_t reading_batch_size_char_handle_ = 0x33;
