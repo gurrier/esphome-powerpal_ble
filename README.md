@@ -19,7 +19,7 @@ The ESPHome component hasn't been merged into esphome yet, but you can use it vi
 >
 > This functionality allows you to view your energy data visualisations within the Powerpal application without ever have to bother connecting your Powerpal device to your phone ever again.
 >
-> This feature works by retrieving the Powerpal authentication information (stored on the Powerpa device itself), and collects 15 measurements before uploading them to your Powerpal Cloud.
+> This feature works by retrieving the Powerpal authentication information (stored on the Powerpal device itself), and collects 15 measurements before uploading them to your Powerpal Cloud.
 >
 > This requires your energy cost per kWh in the configuration, and currently doesn't support peak/off-peak switching.
 
