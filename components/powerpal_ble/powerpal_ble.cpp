@@ -348,7 +348,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
 
       // serialNumber
       if (param->read.handle == this->serial_number_char_handle_) {
-        ESP_LOGI(TAG, "Received uuid read event");
+        ESP_LOGI(TAG, "Received serial_number read event");
         this->powerpal_device_id_ = this->uuid_to_device_id_(param->read.value, param->read.value_len);
         ESP_LOGI(TAG, "Powerpal device id: %s", this->powerpal_device_id_.c_str());
 
@@ -357,7 +357,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
 
       // uuid
       if (param->read.handle == this->uuid_char_handle_) {
-        ESP_LOGI(TAG, "Received serial_number read event");
+        ESP_LOGI(TAG, "Received uuid read event");
         this->powerpal_apikey_ = this->serial_to_apikey_(param->read.value, param->read.value_len);
         ESP_LOGI(TAG, "Powerpal apikey: %s", this->powerpal_apikey_.c_str());
 
