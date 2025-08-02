@@ -10,6 +10,10 @@
 #include <nvs_flash.h>                   // ESP‑IDF non-volatile storage
 #include <nvs.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+
 #ifdef USE_TIME
 #include "esphome/components/time/real_time_clock.h"
 #else
@@ -109,6 +113,15 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
 
   static constexpr uint32_t COMMIT_INTERVAL_S = 60;  // min seconds between commits
   static constexpr uint64_t PULSE_THRESHOLD   = 100; // min pulses between commits
+
+  struct NVSCommitData {
+    uint64_t total;
+    uint64_t daily;
+  };
+
+  static void nvs_commit_task(void *param);
+  QueueHandle_t nvs_queue_{nullptr};
+  TaskHandle_t nvs_task_{nullptr};
 
 
   std::string pkt_to_hex_(const uint8_t *data, uint16_t len);

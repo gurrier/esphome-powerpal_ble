@@ -37,6 +37,9 @@ void Powerpal::setup() {
     ESP_LOGE(TAG, "NVS open failed (%d)", err);
   } else {
     this->nvs_ok_ = true;
+    this->nvs_queue_ = xQueueCreate(1, sizeof(NVSCommitData));
+    if (this->nvs_queue_)
+      xTaskCreate(&Powerpal::nvs_commit_task, "pp_nvs", 4096, this, 1, &this->nvs_task_);
     uint64_t stored = 0;
     err = nvs_get_u64(this->nvs_handle_, "daily", &stored);
     if (err == ESP_OK) {
@@ -209,11 +212,10 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
       ESP_LOGD(TAG, "NVS THROTTLED commit #%u at %us: total=%llu daily=%llu",
                ++this->nvsc_commit_count_, now_s,
                this->total_pulses_, this->daily_pulses_);
-      nvs_set_u64(this->nvs_handle_, "total", this->total_pulses_);
-      nvs_set_u64(this->nvs_handle_, "daily", this->daily_pulses_);
-      esp_err_t err = nvs_commit(this->nvs_handle_);
-      if (err != ESP_OK)
-        ESP_LOGE(TAG, "NVS commit failed (%d)", err);
+      if (this->nvs_queue_) {
+        NVSCommitData data{this->total_pulses_, this->daily_pulses_};
+        xQueueSend(this->nvs_queue_, &data, 0);
+      }
       this->last_commit_ts_ = now_s;
       this->last_pulses_for_threshold_ = this->total_pulses_;
     }
@@ -224,6 +226,20 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
 }
 
 
+
+void Powerpal::nvs_commit_task(void *param) {
+  auto *self = static_cast<Powerpal *>(param);
+  NVSCommitData data;
+  for (;;) {
+    if (xQueueReceive(self->nvs_queue_, &data, portMAX_DELAY) == pdTRUE) {
+      nvs_set_u64(self->nvs_handle_, "total", data.total);
+      nvs_set_u64(self->nvs_handle_, "daily", data.daily);
+      esp_err_t err = nvs_commit(self->nvs_handle_);
+      if (err != ESP_OK)
+        ESP_LOGE(TAG, "NVS commit failed (%d)", err);
+    }
+  }
+}
 
 std::string Powerpal::uuid_to_device_id_(const uint8_t *data, uint16_t length) {
   const char* hexmap[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"};
