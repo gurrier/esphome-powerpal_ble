@@ -254,18 +254,15 @@ void Powerpal::send_pending_readings_() {
 }
 
 void Powerpal::schedule_commit_(bool force) {
-  if (!this->nvs_ok_)
-    return;
-
   App.schedule([this, force]() {
     uint32_t now_s = millis() / 1000;
     bool time_ok = (now_s - this->last_commit_ts_) >= COMMIT_INTERVAL_S;
     bool thresh_ok = (this->total_pulses_ - this->last_pulses_for_threshold_) >= PULSE_THRESHOLD;
     if (force || time_ok || thresh_ok) {
-      ESP_LOGD(TAG, "NVS THROTTLED commit #%u at %us: total=%llu daily=%llu",
+      ESP_LOGD(TAG, "Commit/upload #%u at %us: total=%llu daily=%llu",
                this->nvsc_commit_count_ + 1, now_s,
                this->total_pulses_, this->daily_pulses_);
-      if (this->nvs_queue_) {
+      if (this->nvs_ok_ && this->nvs_queue_) {
         NVSCommitData data{this->total_pulses_, this->daily_pulses_};
         if (xQueueSend(this->nvs_queue_, &data, 0) != pdTRUE) {
           ESP_LOGW(TAG, "NVS queue full; commit skipped");
