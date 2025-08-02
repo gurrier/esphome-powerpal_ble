@@ -121,10 +121,15 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   // 2) Determine day-of-year for rollover
   int today;
 #ifdef USE_TIME
-  auto *time_comp = *this->time_;
-  auto now = time_comp->now();
-  if (now.is_valid()) {
-    today = now.day_of_year;
+  if (this->time_.has_value()) {
+    auto *time_comp = *this->time_;
+    auto now = time_comp->now();
+    if (now.is_valid()) {
+      today = now.day_of_year;
+    } else {
+      struct tm *tm_info = ::localtime(&unix_time);
+      today = tm_info->tm_yday + 1;
+    }
   } else {
     struct tm *tm_info = ::localtime(&unix_time);
     today = tm_info->tm_yday + 1;
@@ -346,7 +351,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
         break;
       }
 
-      // serialNumber
+      // serial number (device id)
       if (param->read.handle == this->serial_number_char_handle_) {
         ESP_LOGI(TAG, "Received serial_number read event");
         this->powerpal_device_id_ = this->uuid_to_device_id_(param->read.value, param->read.value_len);
@@ -355,7 +360,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
         break;
       }
 
-      // uuid
+      // uuid (API key)
       if (param->read.handle == this->uuid_char_handle_) {
         ESP_LOGI(TAG, "Received uuid read event");
         this->powerpal_apikey_ = this->serial_to_apikey_(param->read.value, param->read.value_len);
