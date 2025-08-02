@@ -68,9 +68,9 @@ void Powerpal::setup() {
     ESP_LOGI(TAG, "After setup, total_pulses_ = %llu", this->total_pulses_);
 
   }
-  
-  
-  
+
+
+
   ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
   ESP_LOGI(TAG, "Loaded persisted daily_pulses: %llu", this->daily_pulses_);
 
@@ -85,6 +85,12 @@ void Powerpal::setup() {
     this->daily_energy_sensor_->set_state_class(sensor::STATE_CLASS_TOTAL_INCREASING);
     this->daily_energy_sensor_->set_unit_of_measurement("kWh");
   }
+
+  // Schedule periodic HTTP uploads independent of NVS commits
+  this->set_interval("pp_upload", COMMIT_INTERVAL_S * 1000, [this]() {
+    this->send_pending_readings_();
+    this->stored_measurements_.clear();
+  });
 
 }
 
@@ -259,7 +265,7 @@ void Powerpal::schedule_commit_(bool force) {
     bool time_ok = (now_s - this->last_commit_ts_) >= COMMIT_INTERVAL_S;
     bool thresh_ok = (this->total_pulses_ - this->last_pulses_for_threshold_) >= PULSE_THRESHOLD;
     if (force || time_ok || thresh_ok) {
-      ESP_LOGD(TAG, "Commit/upload #%u at %us: total=%llu daily=%llu",
+      ESP_LOGD(TAG, "Commit #%u at %us: total=%llu daily=%llu",
                this->nvsc_commit_count_ + 1, now_s,
                this->total_pulses_, this->daily_pulses_);
       if (this->nvs_ok_ && this->nvs_queue_) {
@@ -268,8 +274,6 @@ void Powerpal::schedule_commit_(bool force) {
           ESP_LOGW(TAG, "NVS queue full; commit skipped");
         }
       }
-      this->send_pending_readings_();
-      this->stored_measurements_.clear();
       this->last_commit_ts_ = now_s;
       this->last_pulses_for_threshold_ = this->total_pulses_;
       ++this->nvsc_commit_count_;
