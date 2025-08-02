@@ -211,8 +211,15 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
 }
 
 void Powerpal::send_pending_readings_() {
-  if (this->stored_measurements_.empty() || this->http_request_ == nullptr)
+  ESP_LOGI(TAG, "send_pending_readings_ called; %zu queued measurements", this->stored_measurements_.size());
+  if (this->stored_measurements_.empty()) {
+    ESP_LOGD(TAG, "No stored measurements to send");
     return;
+  }
+  if (this->http_request_ == nullptr) {
+    ESP_LOGE(TAG, "HTTP request component not configured");
+    return;
+  }
 
   std::string payload = "[";
   for (size_t i = 0; i < this->stored_measurements_.size(); ++i) {
@@ -236,6 +243,11 @@ void Powerpal::send_pending_readings_() {
       http_request::Header{"Authorization", this->powerpal_apikey_},
       http_request::Header{"Content-Type", "application/json"},
   };
+
+  ESP_LOGD(TAG, "POST %s", url);
+  ESP_LOGD(TAG, "Payload: %s", payload.c_str());
+  for (const auto &h : headers)
+    ESP_LOGD(TAG, "Header: %s: %s", h.name.c_str(), h.value.c_str());
 
   this->http_request_->send(http_request::HTTPMethod::HTTP_POST, url, headers, payload);
 }
