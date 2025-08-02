@@ -220,6 +220,8 @@ void Powerpal::send_pending_readings_() {
     return;
   }
 
+  ESP_LOGI(TAG, "Uploading %u stored measurements", (unsigned) this->stored_measurements_.size());
+
   std::string payload = "[";
   for (size_t i = 0; i < this->stored_measurements_.size(); ++i) {
     const auto &m = this->stored_measurements_[i];
@@ -243,8 +245,8 @@ void Powerpal::send_pending_readings_() {
       http_request::Header{"Content-Type", "application/json"},
   };
 
-  ESP_LOGD(TAG, "POST %s", url);
-  ESP_LOGD(TAG, "Payload: %s", payload.c_str());
+  ESP_LOGI(TAG, "POST %s", url);
+  ESP_LOGI(TAG, "Payload: %s", payload.c_str());
   for (const auto &h : headers)
     ESP_LOGD(TAG, "Header: %s: %s", h.name.c_str(), h.value.c_str());
 
