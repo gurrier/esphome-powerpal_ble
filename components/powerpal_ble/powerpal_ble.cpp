@@ -5,6 +5,8 @@
 
 #include <nvs_flash.h>
 #include <nvs.h>
+#include <vector>
+#include <cstdio>
 
 #ifdef USE_ESP32
 namespace esphome {
@@ -170,10 +172,9 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   }
 
   // 6) Cost for this interval
-  if (this->cost_sensor_) {
-    float cost = (float(pulses) / this->pulses_per_kwh_) * this->energy_cost_;
+  float cost = (float(pulses) / this->pulses_per_kwh_) * this->energy_cost_;
+  if (this->cost_sensor_)
     this->cost_sensor_->publish_state(cost);
-  }
 
   // 7) Raw pulses
   if (this->pulses_sensor_)
@@ -181,8 +182,9 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
 
   // 8) Watt-hours for this interval
   float wh = (float(pulses) / this->pulses_per_kwh_) * 1000.0f;
+  uint32_t wh_int = (uint32_t) roundf(wh);
   if (this->watt_hours_sensor_)
-    this->watt_hours_sensor_->publish_state((int)roundf(wh));
+    this->watt_hours_sensor_->publish_state((int)wh_int);
 
   // 9) Timestamp
   if (this->timestamp_sensor_)
@@ -199,10 +201,64 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   if (this->daily_energy_sensor_)
     this->daily_energy_sensor_->publish_state(daily_kwh);
 
+  PowerpalMeasurement measurement{pulses, unix_time, wh_int, cost};
+  this->stored_measurements_.push_back(measurement);
+  ESP_LOGD(TAG, "Buffered reading: ts=%ld pulses=%u (pending=%zu)", (long) unix_time, pulses,
+           this->stored_measurements_.size());
+
   this->schedule_commit_(force_commit);
 
   if (this->daily_pulses_sensor_)
     this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
+}
+
+void Powerpal::send_pending_readings_() {
+  if (this->stored_measurements_.empty()) {
+    ESP_LOGD(TAG, "No pending readings to upload");
+    return;
+  }
+  if (this->http_request_ == nullptr) {
+    ESP_LOGW(TAG, "HTTP request component not configured; skipping upload");
+    return;
+  }
+
+  ESP_LOGI(TAG, "Uploading %zu reading(s) to Powerpal", this->stored_measurements_.size());
+
+  std::string payload = "[";
+  for (size_t i = 0; i < this->stored_measurements_.size(); ++i) {
+    const auto &m = this->stored_measurements_[i];
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+             "{\"cost\":%.11f,\"is_peak\":false,\"pulses\":%u,\"timestamp\":%ld,\"watt_hours\":%u}",
+             m.cost, m.pulses, (long)m.timestamp, m.watt_hours);
+    if (i != 0)
+      payload += ", ";
+    payload += buf;
+  }
+  payload += "]";
+
+  char url[256];
+  snprintf(url, sizeof(url),
+           "https://readings.powerpal.net/api/v1/meter_reading/%s",
+           this->powerpal_device_id_.c_str());
+
+  std::vector<http_request::Header> headers{
+      http_request::Header{"Authorization", this->powerpal_apikey_},
+      http_request::Header{"Content-Type", "application/json"},
+  };
+
+  auto *req = this->http_request_->send(http_request::HTTPMethod::HTTP_POST, url, headers, payload);
+  if (req != nullptr) {
+    req->on_response([](http_request::Response *resp) {
+      ESP_LOGI(TAG, "Powerpal upload completed with status %d", resp->status_code);
+    });
+    req->on_error([](http_request::Error *error) {
+      ESP_LOGW(TAG, "Powerpal upload failed (status %d): %s", error->status_code,
+               error->message.c_str());
+    });
+  } else {
+    ESP_LOGW(TAG, "Failed to initiate HTTP request to Powerpal API");
+  }
 }
 
 void Powerpal::schedule_commit_(bool force) {
@@ -223,6 +279,8 @@ void Powerpal::schedule_commit_(bool force) {
           ESP_LOGW(TAG, "NVS queue full; commit skipped");
         }
       }
+      this->send_pending_readings_();
+      this->stored_measurements_.clear();
       this->last_commit_ts_ = now_s;
       this->last_pulses_for_threshold_ = this->total_pulses_;
       ++this->nvsc_commit_count_;
