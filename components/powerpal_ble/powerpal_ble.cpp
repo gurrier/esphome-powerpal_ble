@@ -1,6 +1,7 @@
 #include "powerpal_ble.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/application.h"
 
 #include <nvs_flash.h>
 #include <nvs.h>
@@ -143,19 +144,13 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
 #endif
 
   // 3) First-measurement vs midnight-rollover
+  bool force_commit = false;
   if (this->day_of_last_measurement_ == 0) {
     this->day_of_last_measurement_ = today;
   } else if (this->day_of_last_measurement_ != today) {
     this->day_of_last_measurement_ = today;
     this->daily_pulses_ = 0;
-    if (this->nvs_ok_) {
-      ESP_LOGD(TAG, "NVS rollover commit at day change, resetting daily_pulses");
-      nvs_erase_key(this->nvs_handle_, "daily");
-      nvs_commit(this->nvs_handle_);
-      this->last_commit_ts_ = millis() / 1000;
-      this->last_pulses_for_threshold_ = this->total_pulses_;
-      ++this->nvsc_commit_count_;
-    }
+    force_commit = true;
   }
 
   // 4) Read pulse count for this interval
@@ -193,7 +188,7 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   if (this->timestamp_sensor_)
     this->timestamp_sensor_->publish_state((long)unix_time);
 
-  // 10 & 11) Accumulate and throttled NVS commit for Total & Daily Energy
+  // 10 & 11) Accumulate totals then queue commit via scheduled task
   this->total_pulses_ += pulses;
   float total_kwh = this->total_pulses_ / this->pulses_per_kwh_;
   if (this->energy_sensor_)
@@ -204,25 +199,35 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   if (this->daily_energy_sensor_)
     this->daily_energy_sensor_->publish_state(daily_kwh);
 
-  if (this->nvs_ok_) {
-    uint32_t now_s = millis() / 1000;
-    bool time_ok = (now_s - this->last_commit_ts_) >= COMMIT_INTERVAL_S;
-    bool thresh_ok = (this->total_pulses_ - this->last_pulses_for_threshold_) >= PULSE_THRESHOLD;
-    if (time_ok || thresh_ok) {
-      ESP_LOGD(TAG, "NVS THROTTLED commit #%u at %us: total=%llu daily=%llu",
-               ++this->nvsc_commit_count_, now_s,
-               this->total_pulses_, this->daily_pulses_);
-      if (this->nvs_queue_) {
-        NVSCommitData data{this->total_pulses_, this->daily_pulses_};
-        xQueueSend(this->nvs_queue_, &data, 0);
-      }
-      this->last_commit_ts_ = now_s;
-      this->last_pulses_for_threshold_ = this->total_pulses_;
-    }
-  }
+  this->schedule_commit_(force_commit);
 
   if (this->daily_pulses_sensor_)
     this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
+}
+
+void Powerpal::schedule_commit_(bool force) {
+  if (!this->nvs_ok_)
+    return;
+
+  App.schedule([this, force]() {
+    uint32_t now_s = millis() / 1000;
+    bool time_ok = (now_s - this->last_commit_ts_) >= COMMIT_INTERVAL_S;
+    bool thresh_ok = (this->total_pulses_ - this->last_pulses_for_threshold_) >= PULSE_THRESHOLD;
+    if (force || time_ok || thresh_ok) {
+      ESP_LOGD(TAG, "NVS THROTTLED commit #%u at %us: total=%llu daily=%llu",
+               this->nvsc_commit_count_ + 1, now_s,
+               this->total_pulses_, this->daily_pulses_);
+      if (this->nvs_queue_) {
+        NVSCommitData data{this->total_pulses_, this->daily_pulses_};
+        if (xQueueSend(this->nvs_queue_, &data, 0) != pdTRUE) {
+          ESP_LOGW(TAG, "NVS queue full; commit skipped");
+        }
+      }
+      this->last_commit_ts_ = now_s;
+      this->last_pulses_for_threshold_ = this->total_pulses_;
+      ++this->nvsc_commit_count_;
+    }
+  });
 }
 
 
