@@ -100,9 +100,14 @@ void Powerpal::setup() {
 
   // Schedule periodic HTTP uploads independent of NVS commits
   this->set_interval("pp_upload", COMMIT_INTERVAL_S * 1000, [this]() {
-    ESP_LOGD(TAG, "Periodic upload triggered"); 
+    ESP_LOGD(TAG, "Periodic upload triggered");
     this->send_pending_readings_();
   });
+}
+
+void Powerpal::loop() {
+  ::esphome::ble_client::BLEClientNode::loop();
+  Component::loop();
 }
 
 

@@ -66,6 +66,7 @@ static const float kw_to_w_conversion = 1000.0;    // conversion ratio
 class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
  public:
   void setup() override;
+  void loop() override;
   void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                            esp_ble_gattc_cb_param_t *param) override;
   void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) override;
