@@ -87,6 +87,14 @@ void Powerpal::setup() {
     this->daily_energy_sensor_->set_unit_of_measurement("kWh");
   }
 
+  // Publish restored pulse counters so sensors reflect persisted state on boot
+  if (this->energy_sensor_)
+    this->energy_sensor_->publish_state(this->total_pulses_ / this->pulses_per_kwh_);
+  if (this->daily_energy_sensor_)
+    this->daily_energy_sensor_->publish_state(this->daily_pulses_ / this->pulses_per_kwh_);
+  if (this->daily_pulses_sensor_)
+    this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
+
   // Ensure this component is registered so that the interval scheduler works
   App.register_component(this);
 
