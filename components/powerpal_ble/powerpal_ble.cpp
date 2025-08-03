@@ -217,8 +217,10 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
 }
 
 void Powerpal::send_pending_readings_() {
+  ESP_LOGI(TAG, "Preparing to upload %u stored measurements",
+           (unsigned) this->stored_measurements_.size());
   if (this->stored_measurements_.empty()) {
-    ESP_LOGD(TAG, "No stored measurements to send");
+    ESP_LOGI(TAG, "No stored measurements to send");
     return;
   }
   if (this->http_request_ == nullptr) {
