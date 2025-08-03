@@ -64,15 +64,12 @@ static const float kw_to_w_conversion = 1000.0;    // conversion ratio
 
 
 class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
-  // class Powerpal : public esphome::ble_client::BLEClientNode, public PollingComponent {
  public:
   void setup() override;
-  // void loop() override;
   void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                            esp_ble_gattc_cb_param_t *param) override;
   void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) override;
   void dump_config() override;
-  // float get_setup_priority() const override { return setup_priority::DATA; }
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
   void set_ble_client(ble_client::BLEClient *client) { this->parent_ = client; }
   void set_battery(sensor::Sensor *battery) { battery_ = battery; }
@@ -125,6 +122,8 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   QueueHandle_t nvs_queue_{nullptr};
   TaskHandle_t nvs_task_{nullptr};
 
+  // Prevent overlapping uploads
+  bool upload_in_progress_{false};
 
   std::string pkt_to_hex_(const uint8_t *data, uint16_t len);
   void decode_(const uint8_t *data, uint16_t length);
@@ -132,7 +131,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void parse_measurement_(const uint8_t *data, uint16_t length);
   void schedule_commit_(bool force = false);
   void send_pending_readings_();
- 
+
   std::string uuid_to_device_id_(const uint8_t *data, uint16_t length);
   std::string serial_to_apikey_(const uint8_t *data, uint16_t length);
 
@@ -148,7 +147,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   sensor::Sensor *daily_pulses_sensor_{nullptr};
   sensor::Sensor *watt_hours_sensor_{nullptr};
   sensor::Sensor *timestamp_sensor_{nullptr};
- 
+
 
 #ifdef USE_TIME
   optional<time::RealTimeClock *> time_{};
@@ -159,7 +158,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   uint8_t reading_batch_size_[4] = {0x01, 0x00, 0x00, 0x00};
   float pulses_per_kwh_;
   float pulse_multiplier_;
-  
+
 
   uint8_t stored_measurements_count_{0};
   std::vector<PowerpalMeasurement> stored_measurements_;
