@@ -26,8 +26,8 @@ void Powerpal::dump_config() {
 void Powerpal::setup() {
   this->authenticated_ = false;
   this->pulse_multiplier_ = ((seconds_in_minute * this->reading_batch_size_[0]) / (this->pulses_per_kwh_ / kw_to_w_conversion));
-  
-    // ——— NVS init & load ———
+
+  // ——— NVS init & load ———
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
     ESP_ERROR_CHECK(nvs_flash_erase());
@@ -40,9 +40,13 @@ void Powerpal::setup() {
     ESP_LOGE(TAG, "NVS open failed (%d)", err);
   } else {
     this->nvs_ok_ = true;
-    this->nvs_queue_ = xQueueCreate(1, sizeof(NVSCommitData));
-    if (this->nvs_queue_)
+    // increase queue depth so we are less likely to drop commits
+    this->nvs_queue_ = xQueueCreate(4, sizeof(NVSCommitData));
+    if (this->nvs_queue_) {
       xTaskCreate(&Powerpal::nvs_commit_task, "pp_nvs", 4096, this, 1, &this->nvs_task_);
+    } else {
+      ESP_LOGW(TAG, "Failed to create NVS queue");
+    }
     uint64_t stored = 0;
     err = nvs_get_u64(this->nvs_handle_, "daily", &stored);
     if (err == ESP_OK) {
@@ -55,21 +59,18 @@ void Powerpal::setup() {
     }
 
     uint64_t stored_total = 0;
-    esp_err_t err = nvs_get_u64(this->nvs_handle_, "total", &stored_total);
-    if (err == ESP_OK) {
+    esp_err_t err_total = nvs_get_u64(this->nvs_handle_, "total", &stored_total);
+    if (err_total == ESP_OK) {
       this->total_pulses_ = stored_total;
       ESP_LOGI(TAG, "Loaded total_pulses: %llu", stored_total);
-    } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+    } else if (err_total == ESP_ERR_NVS_NOT_FOUND) {
       ESP_LOGI(TAG, "No stored total_pulses; starting at zero");
     } else {
-      ESP_LOGE(TAG, "Error reading total_pulses (%d)", err);
+      ESP_LOGE(TAG, "Error reading total_pulses (%d)", err_total);
     }
 
     ESP_LOGI(TAG, "After setup, total_pulses_ = %llu", this->total_pulses_);
-
   }
-
-
 
   ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
   ESP_LOGI(TAG, "Loaded persisted daily_pulses: %llu", this->daily_pulses_);
@@ -86,12 +87,14 @@ void Powerpal::setup() {
     this->daily_energy_sensor_->set_unit_of_measurement("kWh");
   }
 
+  // Ensure this component is registered so that the interval scheduler works
+  App.register_component(this);
+
   // Schedule periodic HTTP uploads independent of NVS commits
   this->set_interval("pp_upload", COMMIT_INTERVAL_S * 1000, [this]() {
+    ESP_LOGD(TAG, "Periodic upload triggered"); 
     this->send_pending_readings_();
-    this->stored_measurements_.clear();
   });
-
 }
 
 
@@ -210,13 +213,18 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   PowerpalMeasurement measurement{pulses, unix_time, wh_int, cost};
   this->stored_measurements_.push_back(measurement);
 
-  this->schedule_commit_(force_commit);
+  this->schedule_commit_(force);
 
   if (this->daily_pulses_sensor_)
     this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
 }
 
 void Powerpal::send_pending_readings_() {
+  if (this->upload_in_progress_) {
+    ESP_LOGW(TAG, "Upload already in progress; skipping"); 
+    return;
+  }
+
   ESP_LOGI(TAG, "Preparing to upload %u stored measurements",
            (unsigned) this->stored_measurements_.size());
   if (this->stored_measurements_.empty()) {
@@ -228,11 +236,15 @@ void Powerpal::send_pending_readings_() {
     return;
   }
 
+  this->upload_in_progress_ = true;
   ESP_LOGI(TAG, "Uploading %u stored measurements", (unsigned) this->stored_measurements_.size());
 
+  // Make a copy so if we decide to retry we can keep original stored_measurements_
+  std::vector<PowerpalMeasurement> measurements_copy = this->stored_measurements_;
+
   std::string payload = "[";
-  for (size_t i = 0; i < this->stored_measurements_.size(); ++i) {
-    const auto &m = this->stored_measurements_[i];
+  for (size_t i = 0; i < measurements_copy.size(); ++i) {
+    const auto &m = measurements_copy[i];
     char buf[256];
     snprintf(buf, sizeof(buf),
              "{\"cost\":%.11f,\"is_peak\":false,\"pulses\":%u,\"timestamp\":%ld,\"watt_hours\":%u}",
@@ -259,6 +271,11 @@ void Powerpal::send_pending_readings_() {
     ESP_LOGD(TAG, "Header: %s: %s", h.name.c_str(), h.value.c_str());
 
   this->http_request_->send(http_request::HTTPMethod::HTTP_POST, url, headers, payload);
+
+  // Note: currently we clear the buffer immediately; if you want to only clear on confirmed successful
+  // response, hook into the HTTP request's response callback and clear then instead.
+  this->stored_measurements_.clear();
+  this->upload_in_progress_ = false;
 }
 
 void Powerpal::schedule_commit_(bool force) {
@@ -290,11 +307,18 @@ void Powerpal::nvs_commit_task(void *param) {
   NVSCommitData data;
   for (;;) {
     if (xQueueReceive(self->nvs_queue_, &data, portMAX_DELAY) == pdTRUE) {
-      nvs_set_u64(self->nvs_handle_, "total", data.total);
-      nvs_set_u64(self->nvs_handle_, "daily", data.daily);
+      esp_err_t set_total = nvs_set_u64(self->nvs_handle_, "total", data.total);
+      esp_err_t set_daily = nvs_set_u64(self->nvs_handle_, "daily", data.daily);
+      if (set_total != ESP_OK || set_daily != ESP_OK) {
+        ESP_LOGE(TAG, "NVS set_u64 failed (total: %d, daily: %d)", set_total, set_daily);
+        continue;
+      }
       esp_err_t err = nvs_commit(self->nvs_handle_);
-      if (err != ESP_OK)
+      if (err != ESP_OK) {
         ESP_LOGE(TAG, "NVS commit failed (%d)", err);
+      } else {
+        ESP_LOGI(TAG, "NVS commit succeeded: total=%llu daily=%llu", data.total, data.daily);
+      }
     }
   }
 }
@@ -391,7 +415,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
             }
           } else {
             // reading batch size is set correctly so subscribe to measurement notifications
-            auto status = esp_ble_gattc_register_for_notify(this->parent_->get_gattc_if(), this->parent_->get_remote_bda(),
+            auto status = esp_ble_gattc_register_for_notify(this->parent_->get_gattc_if(), this->parent()->get_remote_bda(),
                                                             this->measurement_char_handle_);
             if (status) {
               ESP_LOGW(TAG, "[%s] esp_ble_gattc_register_for_notify failed, status=%d",
@@ -511,60 +535,6 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
         if (read_led_sensitivity_status) {
           ESP_LOGW(TAG, "Error sending read request for led sensitivity, status=%d", read_led_sensitivity_status);
         }
-
-        break;
-      }
-      if (param->write.handle == this->reading_batch_size_char_handle_) {
-        // reading batch size is now set correctly so subscribe to measurement notifications
-        auto status = esp_ble_gattc_register_for_notify(this->parent_->get_gattc_if(), this->parent_->get_remote_bda(),
-                                                        this->measurement_char_handle_);
-        if (status) {
-          ESP_LOGW(TAG, "[%s] esp_ble_gattc_register_for_notify failed, status=%d",
-                   this->parent_->address_str().c_str(), status);
-        }
-        break;
-      }
-
-      ESP_LOGW(TAG, "[%s] Missed all handle matches: %d",
-               this->parent_->address_str().c_str(), param->write.handle);
-      break;
-    }  // ESP_GATTC_WRITE_CHAR_EVT
-
-    case ESP_GATTC_NOTIFY_EVT: {
-      ESP_LOGD(TAG, "[%s] Received Notification", this->parent_->address_str().c_str());
-
-      // battery
-      if (param->notify.handle == this->battery_char_handle_) {
-        ESP_LOGD(TAG, "Received battery notify event");
-        this->parse_battery_(param->notify.value, param->notify.value_len);
-        break;
-      }
-
-      // measurement
-      if (param->notify.handle == this->measurement_char_handle_) {
-        ESP_LOGD(TAG, "Received measurement notify event");
-        this->parse_measurement_(param->notify.value, param->notify.value_len);
-        break;
-      }
-      break;  // registerForNotify
-    }
-    default:
-      break;
-  }
-}
-
-void Powerpal::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
-  switch (event) {
-    // This event is sent once authentication has completed
-    case ESP_GAP_BLE_AUTH_CMPL_EVT: {
-      if (param->ble_security.auth_cmpl.success) {
-        ESP_LOGI(TAG, "[%s] Writing pairing code to Powerpal", this->parent_->address_str().c_str());
-        auto status = esp_ble_gattc_write_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                               this->pairing_code_char_handle_, sizeof(this->pairing_code_),
-                                               this->pairing_code_, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (status) {
-          ESP_LOGW(TAG, "Error sending write request for pairing_code, status=%d", status);
-        }
       }
       break;
     }
@@ -575,5 +545,4 @@ void Powerpal::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_pa
 
 }  // namespace powerpal_ble
 }  // namespace esphome
-
 #endif
