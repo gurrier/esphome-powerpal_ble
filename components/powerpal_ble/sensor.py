@@ -128,7 +128,7 @@ CONFIG_SCHEMA = cv.All(
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
             cv.Optional(CONF_COST_PER_KWH): cv.float_range(min=0),
-            cv.Optional(CONF_HTTP_REQUEST_ID): cv.use_id(http_request.HTTPRequestComponent),
+            cv.Optional(CONF_HTTP_REQUEST_ID): cv.use_id(http_request.HttpRequestComponent),
             cv.Optional(
                 CONF_POWERPAL_DEVICE_ID
             ): powerpal_deviceid,  # deviceid (optional) # if not configured, will grab from device
