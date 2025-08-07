@@ -247,13 +247,18 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
     this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
 
   if (this->powerpal_device_id_.length() && this->powerpal_apikey_.length()) {
+    ESP_LOGD(TAG, "Attempting upload to Powerpal");
     this->upload_reading_(t32, pulses, cost, wh);
+  } else {
+    ESP_LOGD(TAG, "Skipping upload: missing device ID or API key");
   }
 }
 
 void Powerpal::upload_reading_(uint32_t timestamp, uint16_t pulses, float cost, float watt_hours) {
-  if (this->energy_cost_ <= 0.0f)
+  if (this->energy_cost_ <= 0.0f) {
+    ESP_LOGD(TAG, "Upload skipped: invalid energy_cost %.2f", this->energy_cost_);
     return;
+  }
 
   char url[128];
   snprintf(url, sizeof(url), "https://readings.powerpal.net/api/v1/meter_reading/%s", this->powerpal_device_id_.c_str());
@@ -262,6 +267,9 @@ void Powerpal::upload_reading_(uint32_t timestamp, uint16_t pulses, float cost, 
   snprintf(payload, sizeof(payload),
            "[ {\"cost\":%.2f, \"is_peak\": false, \"pulses\":%u, \"timestamp\":%lu, \"watt_hours\":%.0f} ]",
            cost, pulses, static_cast<unsigned long>(timestamp), watt_hours);
+
+  ESP_LOGD(TAG, "Upload URL: %s", url);
+  ESP_LOGD(TAG, "Upload JSON: %s", payload);
 
   esp_http_client_config_t config = {};
   config.url = url;
