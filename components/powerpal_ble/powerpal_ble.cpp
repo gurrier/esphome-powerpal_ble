@@ -13,6 +13,13 @@ namespace powerpal_ble {
 static const char *const TAG = "powerpal_ble";
 
 
+Powerpal::~Powerpal() {
+  if (this->nvs_ok_) {
+    nvs_close(this->nvs_handle_);
+    this->nvs_ok_ = false;
+  }
+}
+
 void Powerpal::dump_config() {
   ESP_LOGCONFIG(TAG, "POWERPAL");
   LOG_SENSOR(" ", "Battery", this->battery_);
