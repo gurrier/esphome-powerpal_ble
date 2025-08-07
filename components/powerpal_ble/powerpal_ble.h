@@ -4,11 +4,16 @@
 #include "esphome/components/ble_client/ble_client.h"
 #include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/http_request/http_request.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/helpers.h"
 
 #include <nvs_flash.h>                   // ESP‑IDF non-volatile storage
 #include <nvs.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
 
 #ifdef USE_TIME
 #include "esphome/components/time/real_time_clock.h"
@@ -93,6 +98,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void set_device_id(std::string powerpal_device_id) { powerpal_device_id_ = powerpal_device_id; }
   void set_apikey(std::string powerpal_apikey) { powerpal_apikey_ = powerpal_apikey; }
   void set_energy_cost(double energy_cost) { energy_cost_ = energy_cost; }
+  void set_http_request(http_request::HTTPRequestComponent *http_request) { http_request_ = http_request; }
 
  protected:
   // Persisted daily pulses:
@@ -110,11 +116,22 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   static constexpr uint32_t COMMIT_INTERVAL_S = 60;  // min seconds between commits
   static constexpr uint64_t PULSE_THRESHOLD   = 100; // min pulses between commits
 
+  struct NVSCommitData {
+    uint64_t total;
+    uint64_t daily;
+  };
+
+  static void nvs_commit_task(void *param);
+  QueueHandle_t nvs_queue_{nullptr};
+  TaskHandle_t nvs_task_{nullptr};
+
 
   std::string pkt_to_hex_(const uint8_t *data, uint16_t len);
   void decode_(const uint8_t *data, uint16_t length);
   void parse_battery_(const uint8_t *data, uint16_t length);
   void parse_measurement_(const uint8_t *data, uint16_t length);
+  void schedule_commit_(bool force = false);
+  void send_pending_readings_();
  
   std::string uuid_to_device_id_(const uint8_t *data, uint16_t length);
   std::string serial_to_apikey_(const uint8_t *data, uint16_t length);
@@ -149,6 +166,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   std::string powerpal_device_id_;
   std::string powerpal_apikey_;
   double energy_cost_{0.0};
+  http_request::HTTPRequestComponent *http_request_{nullptr};
 
   uint16_t pairing_code_char_handle_ = 0x2e;
   uint16_t reading_batch_size_char_handle_ = 0x33;

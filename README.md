@@ -19,9 +19,11 @@ The ESPHome component hasn't been merged into esphome yet, but you can use it vi
 >
 > This functionality allows you to view your energy data visualisations within the Powerpal application without ever have to bother connecting your Powerpal device to your phone ever again.
 >
-> This feature works by retrieving the Powerpal authentication information (stored on the Powerpal device itself), and collects 15 measurements before uploading them to your Powerpal Cloud.
+> This feature works by retrieving the Powerpal authentication information (stored on the Powerpal device itself), collecting measurements and uploading them directly to your Powerpal Cloud.
 >
-> This requires your energy cost per kWh in the configuration, and currently doesn't support peak/off-peak switching.
+> To enable uploads, define an [HTTP Request](https://esphome.io/components/http_request.html) component and reference it with `http_request_id`. The component uploads stored readings to the Powerpal API once per minute using your `powerpal_apikey` and `powerpal_device_id`.
+>
+> This requires your energy cost per kWh in the configuration and currently doesn't support peak/off-peak switching.
 
 #### Requirements:
 - An ESP32
@@ -39,8 +41,8 @@ external_components:
     components: [ ble_client, powerpal_ble ]
 
 # optional requirement to enable powerpal cloud uploading
-#http_request:
-#  id: powerpal_cloud_uploader
+http_request:
+  id: powerpal_cloud_uploader
 
 # optional requirement used with daily energy sensor
 time:
