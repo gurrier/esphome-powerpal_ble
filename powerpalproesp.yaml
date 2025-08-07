@@ -27,10 +27,6 @@ button:
     name: "Restart"
     icon: "mdi:restart"
 
-http_request:
-  id: powerpal_cloud_uploader
-  verify_ssl: false
-
 sensor:
   - platform: powerpal_ble
     id: powerpal_ble_sensor
@@ -57,7 +53,7 @@ sensor:
     notification_interval: 1 # In seconds
     pulses_per_kwh: 1000
     time_id: homeassistant_time
-
+    
 logger:
 #  level: DEBUG
 #  logs:

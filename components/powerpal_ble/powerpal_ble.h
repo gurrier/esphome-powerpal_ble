@@ -95,6 +95,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void decode_(const uint8_t *data, uint16_t length);
   void parse_battery_(const uint8_t *data, uint16_t length);
   void parse_measurement_(const uint8_t *data, uint16_t length);
+  void upload_reading_(uint32_t timestamp, uint16_t pulses, float cost, float watt_hours);
  
   std::string uuid_to_device_id_(const uint8_t *data, uint16_t length);
   std::string serial_to_apikey_(const uint8_t *data, uint16_t length);
