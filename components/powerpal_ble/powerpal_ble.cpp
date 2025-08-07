@@ -5,6 +5,7 @@
 #include <nvs_flash.h>
 #include <nvs.h>
 #include <ctime>
+#include <cstdio>
 
 #ifdef USE_ESP32
 namespace esphome {
@@ -90,11 +91,13 @@ void Powerpal::setup() {
 
 
 std::string Powerpal::pkt_to_hex_(const uint8_t *data, uint16_t len) {
-  char buf[64];
-  memset(buf, 0, 64);
-  for (int i = 0; i < len; i++)
-    sprintf(&buf[i * 2], "%02x", data[i]);
-  std::string ret = buf;
+  std::string ret;
+  ret.reserve(static_cast<size_t>(len) * 2);
+  for (uint16_t i = 0; i < len; i++) {
+    char byte_buf[3];
+    snprintf(byte_buf, sizeof(byte_buf), "%02x", data[i]);
+    ret.append(byte_buf, 2);
+  }
   return ret;
 }
 
