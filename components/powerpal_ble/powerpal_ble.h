@@ -2,20 +2,18 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/ble_client/ble_client.h"
-#include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/helpers.h"
-
-#include <nvs_flash.h>                   // ESP‑IDF non-volatile storage
-#include <nvs.h>
 
 #ifdef USE_TIME
 #include "esphome/components/time/real_time_clock.h"
 #endif
 
 #ifdef USE_ESP32
-
+#include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
+#include <nvs_flash.h>                   // ESP‑IDF non-volatile storage
+#include <nvs.h>
 #include <esp_gattc_api.h>
 
 namespace esphome {
