@@ -23,9 +23,7 @@ void Powerpal::dump_config() {
 
 void Powerpal::setup() {
   this->authenticated_ = false;
-  this->pulse_multiplier_ = ((seconds_in_minute * this->reading_batch_size_[0]) / (this->pulses_per_kwh_ / kw_to_w_conversion));
-  
-    // ——— NVS init & load ———
+  // ——— NVS init & load ———
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
     ESP_ERROR_CHECK(nvs_flash_erase());
@@ -63,10 +61,9 @@ void Powerpal::setup() {
     ESP_LOGI(TAG, "After setup, total_pulses_ = %llu", this->total_pulses_);
 
   }
-  
-  
-  
-  ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
+
+
+
   ESP_LOGI(TAG, "Loaded persisted daily_pulses: %llu", this->daily_pulses_);
 
   // ——— set sensor metadata defaults ———
