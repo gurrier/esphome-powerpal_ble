@@ -27,6 +27,11 @@ void Powerpal::dump_config() {
   LOG_SENSOR(" ", "Power", this->power_sensor_);
   LOG_SENSOR(" ", "Daily Energy", this->daily_energy_sensor_);
   LOG_SENSOR(" ", "Total Energy", this->energy_sensor_);
+  LOG_SENSOR(" ", "Cost", this->cost_sensor_);
+  LOG_SENSOR(" ", "Pulses", this->pulses_sensor_);
+  LOG_SENSOR(" ", "Watt Hours", this->watt_hours_sensor_);
+  LOG_SENSOR(" ", "Timestamp", this->timestamp_sensor_);
+  LOG_SENSOR(" ", "Daily Pulses", this->daily_pulses_sensor_);
   }
 
 void Powerpal::setup() {
