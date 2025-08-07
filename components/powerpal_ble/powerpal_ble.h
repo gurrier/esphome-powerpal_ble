@@ -94,7 +94,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   // Throttle state for NVS commits
   uint32_t last_commit_ts_{0};              // timestamp of last commit (seconds)
   uint64_t last_pulses_for_threshold_{0};   // total_pulses_ at last commit
-  uint32_t nvsc_commit_count_{0};           // count of NVS commits
+  uint32_t nvs_commit_count_{0};            // count of NVS commits
 
   static constexpr uint32_t COMMIT_INTERVAL_S = 60;  // min seconds between commits
   static constexpr uint64_t PULSE_THRESHOLD   = 100; // min pulses between commits
