@@ -4,6 +4,7 @@
 
 #include <nvs_flash.h>
 #include <nvs.h>
+#include <ctime>
 
 #ifdef USE_ESP32
 namespace esphome {
