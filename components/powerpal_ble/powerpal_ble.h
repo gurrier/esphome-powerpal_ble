@@ -12,8 +12,6 @@
 
 #ifdef USE_TIME
 #include "esphome/components/time/real_time_clock.h"
-#else
-#include <ctime>
 #endif
 
 #ifdef USE_ESP32
@@ -24,16 +22,6 @@ namespace esphome {
 namespace powerpal_ble {
 
 namespace espbt = esphome::esp32_ble_tracker;
-
-struct PowerpalMeasurement {
-  uint16_t pulses;
-  time_t timestamp;
-  uint32_t watt_hours;
-  float cost;
-  // bool is_peak;
-};
-
-
 
 static const espbt::ESPBTUUID POWERPAL_SERVICE_UUID =
     espbt::ESPBTUUID::from_raw("59DAABCD-12F4-25A6-7D4F-55961DCE4205");
@@ -144,8 +132,6 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   float pulse_multiplier_;
   
 
-  uint8_t stored_measurements_count_{0};
-  std::vector<PowerpalMeasurement> stored_measurements_;
   std::string powerpal_device_id_;
   std::string powerpal_apikey_;
   double energy_cost_{0.0};
