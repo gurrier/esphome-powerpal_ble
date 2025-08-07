@@ -39,13 +39,6 @@ static const espbt::ESPBTUUID POWERPAL_CHARACTERISTIC_SERIAL_UUID =
 static const espbt::ESPBTUUID POWERPAL_BATTERY_SERVICE_UUID = espbt::ESPBTUUID::from_uint16(0x180F);
 static const espbt::ESPBTUUID POWERPAL_BATTERY_CHARACTERISTIC_UUID = espbt::ESPBTUUID::from_uint16(0x2A19);
 
-
-
-static const uint8_t seconds_in_minute = 60;    // seconds
-static const float kw_to_w_conversion = 1000.0;    // conversion ratio
-
-
-
 class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   // class Powerpal : public esphome::ble_client::BLEClientNode, public PollingComponent {
  public:
