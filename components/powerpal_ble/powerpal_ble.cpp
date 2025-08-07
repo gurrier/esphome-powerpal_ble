@@ -156,7 +156,7 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
       nvs_commit(this->nvs_handle_);
       this->last_commit_ts_ = millis() / 1000;
       this->last_pulses_for_threshold_ = this->total_pulses_;
-      ++this->nvsc_commit_count_;
+      ++this->nvs_commit_count_;
     }
   }
 
@@ -212,7 +212,7 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
     bool thresh_ok = (this->total_pulses_ - this->last_pulses_for_threshold_) >= PULSE_THRESHOLD;
     if (time_ok || thresh_ok) {
       ESP_LOGD(TAG, "NVS THROTTLED commit #%u at %us: total=%llu daily=%llu",
-               ++this->nvsc_commit_count_, now_s,
+               ++this->nvs_commit_count_, now_s,
                this->total_pulses_, this->daily_pulses_);
       nvs_set_u64(this->nvs_handle_, "total", this->total_pulses_);
       nvs_set_u64(this->nvs_handle_, "daily", this->daily_pulses_);
