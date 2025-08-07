@@ -5,6 +5,7 @@
 #include <nvs_flash.h>
 #include <nvs.h>
 #include <ctime>
+#include <time.h>
 #include <cstdio>
 
 #ifdef USE_ESP32
@@ -132,6 +133,15 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   time_t unix_time = time_t(t32);
 
   // 2) Determine day-of-year for rollover
+  auto calc_today = [&]() -> int {
+    struct tm tm_info;
+    if (localtime_r(&unix_time, &tm_info) == nullptr) {
+      ESP_LOGE(TAG, "localtime_r failed");
+      return 0;
+    }
+    return tm_info.tm_yday + 1;
+  };
+
   int today;
 #ifdef USE_TIME
   if (this->time_.has_value()) {
@@ -140,16 +150,13 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
     if (now.is_valid()) {
       today = now.day_of_year;
     } else {
-      struct tm *tm_info = ::localtime(&unix_time);
-      today = tm_info->tm_yday + 1;
+      today = calc_today();
     }
   } else {
-    struct tm *tm_info = ::localtime(&unix_time);
-    today = tm_info->tm_yday + 1;
+    today = calc_today();
   }
 #else
-  struct tm *tm_info = ::localtime(&unix_time);
-  today = tm_info->tm_yday + 1;
+  today = calc_today();
 #endif
 
   // 3) First-measurement vs midnight-rollover
