@@ -1,9 +1,12 @@
 #include "powerpal_ble.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/application.h"
 
 #include <nvs_flash.h>
 #include <nvs.h>
+#include <vector>
+#include <cstdio>
 
 #ifdef USE_ESP32
 namespace esphome {
@@ -37,6 +40,9 @@ void Powerpal::setup() {
     ESP_LOGE(TAG, "NVS open failed (%d)", err);
   } else {
     this->nvs_ok_ = true;
+    this->nvs_queue_ = xQueueCreate(1, sizeof(NVSCommitData));
+    if (this->nvs_queue_)
+      xTaskCreate(&Powerpal::nvs_commit_task, "pp_nvs", 4096, this, 1, &this->nvs_task_);
     uint64_t stored = 0;
     err = nvs_get_u64(this->nvs_handle_, "daily", &stored);
     if (err == ESP_OK) {
@@ -140,19 +146,13 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
 #endif
 
   // 3) First-measurement vs midnight-rollover
+  bool force_commit = false;
   if (this->day_of_last_measurement_ == 0) {
     this->day_of_last_measurement_ = today;
   } else if (this->day_of_last_measurement_ != today) {
     this->day_of_last_measurement_ = today;
     this->daily_pulses_ = 0;
-    if (this->nvs_ok_) {
-      ESP_LOGD(TAG, "NVS rollover commit at day change, resetting daily_pulses");
-      nvs_erase_key(this->nvs_handle_, "daily");
-      nvs_commit(this->nvs_handle_);
-      this->last_commit_ts_ = millis() / 1000;
-      this->last_pulses_for_threshold_ = this->total_pulses_;
-      ++this->nvsc_commit_count_;
-    }
+    force_commit = true;
   }
 
   // 4) Read pulse count for this interval
@@ -172,10 +172,9 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   }
 
   // 6) Cost for this interval
-  if (this->cost_sensor_) {
-    float cost = (float(pulses) / this->pulses_per_kwh_) * this->energy_cost_;
+  float cost = (float(pulses) / this->pulses_per_kwh_) * this->energy_cost_;
+  if (this->cost_sensor_)
     this->cost_sensor_->publish_state(cost);
-  }
 
   // 7) Raw pulses
   if (this->pulses_sensor_)
@@ -183,14 +182,15 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
 
   // 8) Watt-hours for this interval
   float wh = (float(pulses) / this->pulses_per_kwh_) * 1000.0f;
+  uint32_t wh_int = (uint32_t) roundf(wh);
   if (this->watt_hours_sensor_)
-    this->watt_hours_sensor_->publish_state((int)roundf(wh));
+    this->watt_hours_sensor_->publish_state((int)wh_int);
 
   // 9) Timestamp
   if (this->timestamp_sensor_)
     this->timestamp_sensor_->publish_state((long)unix_time);
 
-  // 10 & 11) Accumulate and throttled NVS commit for Total & Daily Energy
+  // 10 & 11) Accumulate totals then queue commit via scheduled task
   this->total_pulses_ += pulses;
   float total_kwh = this->total_pulses_ / this->pulses_per_kwh_;
   if (this->energy_sensor_)
@@ -201,29 +201,99 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   if (this->daily_energy_sensor_)
     this->daily_energy_sensor_->publish_state(daily_kwh);
 
-  if (this->nvs_ok_) {
-    uint32_t now_s = millis() / 1000;
-    bool time_ok = (now_s - this->last_commit_ts_) >= COMMIT_INTERVAL_S;
-    bool thresh_ok = (this->total_pulses_ - this->last_pulses_for_threshold_) >= PULSE_THRESHOLD;
-    if (time_ok || thresh_ok) {
-      ESP_LOGD(TAG, "NVS THROTTLED commit #%u at %us: total=%llu daily=%llu",
-               ++this->nvsc_commit_count_, now_s,
-               this->total_pulses_, this->daily_pulses_);
-      nvs_set_u64(this->nvs_handle_, "total", this->total_pulses_);
-      nvs_set_u64(this->nvs_handle_, "daily", this->daily_pulses_);
-      esp_err_t err = nvs_commit(this->nvs_handle_);
-      if (err != ESP_OK)
-        ESP_LOGE(TAG, "NVS commit failed (%d)", err);
-      this->last_commit_ts_ = now_s;
-      this->last_pulses_for_threshold_ = this->total_pulses_;
-    }
-  }
+  PowerpalMeasurement measurement{pulses, unix_time, wh_int, cost};
+  this->stored_measurements_.push_back(measurement);
+
+  this->schedule_commit_(force_commit);
 
   if (this->daily_pulses_sensor_)
     this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
 }
 
+void Powerpal::send_pending_readings_() {
+  ESP_LOGI(TAG, "send_pending_readings_ called; %zu queued measurements", this->stored_measurements_.size());
+  if (this->stored_measurements_.empty()) {
+    ESP_LOGD(TAG, "No stored measurements to send");
+    return;
+  }
+  if (this->http_request_ == nullptr) {
+    ESP_LOGE(TAG, "HTTP request component not configured");
+    return;
+  }
 
+  std::string payload = "[";
+  for (size_t i = 0; i < this->stored_measurements_.size(); ++i) {
+    const auto &m = this->stored_measurements_[i];
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+             "{\"cost\":%.11f,\"is_peak\":false,\"pulses\":%u,\"timestamp\":%ld,\"watt_hours\":%u}",
+             m.cost, m.pulses, (long)m.timestamp, m.watt_hours);
+    if (i != 0)
+      payload += ", ";
+    payload += buf;
+  }
+  payload += "]";
+
+  char url[256];
+  snprintf(url, sizeof(url),
+           "https://readings.powerpal.net/api/v1/meter_reading/%s",
+           this->powerpal_device_id_.c_str());
+
+  std::vector<http_request::Header> headers{
+      http_request::Header{"Authorization", this->powerpal_apikey_},
+      http_request::Header{"Content-Type", "application/json"},
+  };
+
+  ESP_LOGD(TAG, "POST %s", url);
+  ESP_LOGD(TAG, "Payload: %s", payload.c_str());
+  for (const auto &h : headers)
+    ESP_LOGD(TAG, "Header: %s: %s", h.name.c_str(), h.value.c_str());
+
+  this->http_request_->send(http_request::HTTPMethod::HTTP_POST, url, headers, payload);
+}
+
+void Powerpal::schedule_commit_(bool force) {
+  if (!this->nvs_ok_)
+    return;
+
+  App.schedule([this, force]() {
+    uint32_t now_s = millis() / 1000;
+    bool time_ok = (now_s - this->last_commit_ts_) >= COMMIT_INTERVAL_S;
+    bool thresh_ok = (this->total_pulses_ - this->last_pulses_for_threshold_) >= PULSE_THRESHOLD;
+    if (force || time_ok || thresh_ok) {
+      ESP_LOGD(TAG, "NVS THROTTLED commit #%u at %us: total=%llu daily=%llu",
+               this->nvsc_commit_count_ + 1, now_s,
+               this->total_pulses_, this->daily_pulses_);
+      if (this->nvs_queue_) {
+        NVSCommitData data{this->total_pulses_, this->daily_pulses_};
+        if (xQueueSend(this->nvs_queue_, &data, 0) != pdTRUE) {
+          ESP_LOGW(TAG, "NVS queue full; commit skipped");
+        }
+      }
+      this->send_pending_readings_();
+      this->stored_measurements_.clear();
+      this->last_commit_ts_ = now_s;
+      this->last_pulses_for_threshold_ = this->total_pulses_;
+      ++this->nvsc_commit_count_;
+    }
+  });
+}
+
+
+
+void Powerpal::nvs_commit_task(void *param) {
+  auto *self = static_cast<Powerpal *>(param);
+  NVSCommitData data;
+  for (;;) {
+    if (xQueueReceive(self->nvs_queue_, &data, portMAX_DELAY) == pdTRUE) {
+      nvs_set_u64(self->nvs_handle_, "total", data.total);
+      nvs_set_u64(self->nvs_handle_, "daily", data.daily);
+      esp_err_t err = nvs_commit(self->nvs_handle_);
+      if (err != ESP_OK)
+        ESP_LOGE(TAG, "NVS commit failed (%d)", err);
+    }
+  }
+}
 
 std::string Powerpal::uuid_to_device_id_(const uint8_t *data, uint16_t length) {
   const char* hexmap[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"};
