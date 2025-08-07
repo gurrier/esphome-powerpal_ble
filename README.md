@@ -30,17 +30,13 @@ The ESPHome component hasn't been merged into esphome yet, but you can use it vi
   - BLE MAC address (can be found on device sticker, by ESPHome BLEtracker, or by using an app like nRF Connect once you have disabled the bluetooth of all your smart devices)
   - Connection pairing pin (6 digits you input when setting up your device, also can be found printed in Powerpal info pack, or inside the Powerpal application)
   - Your Smart meter pulse rate (eg. 1000 pulses = 1kW/h)
-- Optionally uncomment the `http_request_id` and add your `cost_per_kwh` to enable Powerpal cloud uploading.
+  - Provide your `cost_per_kwh` to enable Powerpal cloud uploading. The component will automatically send each measurement to the Powerpal servers using the API key and device id stored on your Powerpal.
 
 ```yaml
 external_components:
   - source: github://WeekendWarrior1/esphome@powerpal_ble
     # requires ble_client because I had to add some small features to authenticate properly
     components: [ ble_client, powerpal_ble ]
-
-# optional requirement to enable powerpal cloud uploading
-#http_request:
-#  id: powerpal_cloud_uploader
 
 # optional requirement used with daily energy sensor
 time:
@@ -68,7 +64,6 @@ sensor:
     notification_interval: 1 # get updates every 1 minute
     pulses_per_kwh: 1000
     time_id: homeassistant_time # daily energy still works without a time_id, but recommended to include one to properly handle daylight savings, etc.
-#    http_request_id: powerpal_cloud_uploader
 #    cost_per_kwh: 0.20 #dollars per kWh
 #    powerpal_device_id: 0000abcd #optional, component will retrieve from your Powerpal if not set
 #    powerpal_apikey: 4a89e298-b17b-43e7-a0c1-fcd1412e98ef #optional, component will retrieve from your Powerpal if not set

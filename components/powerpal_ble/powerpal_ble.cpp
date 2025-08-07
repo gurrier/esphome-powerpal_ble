@@ -7,6 +7,8 @@
 #include <ctime>
 #include <time.h>
 #include <cstdio>
+#include <cstring>
+#include <esp_http_client.h>
 
 #ifdef USE_ESP32
 namespace esphome {
@@ -192,9 +194,11 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   }
 
   // 6) Cost for this interval
-  if (this->cost_sensor_) {
-    float cost = (float(pulses) / this->pulses_per_kwh_) * this->energy_cost_;
-    this->cost_sensor_->publish_state(cost);
+  float cost = 0.0f;
+  if (this->energy_cost_ > 0.0f) {
+    cost = (float(pulses) / this->pulses_per_kwh_) * this->energy_cost_;
+    if (this->cost_sensor_)
+      this->cost_sensor_->publish_state(cost);
   }
 
   // 7) Raw pulses
@@ -241,6 +245,46 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
 
   if (this->daily_pulses_sensor_)
     this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
+
+  if (this->powerpal_device_id_.length() && this->powerpal_apikey_.length()) {
+    this->upload_reading_(t32, pulses, cost, wh);
+  }
+}
+
+void Powerpal::upload_reading_(uint32_t timestamp, uint16_t pulses, float cost, float watt_hours) {
+  if (this->energy_cost_ <= 0.0f)
+    return;
+
+  char url[128];
+  snprintf(url, sizeof(url), "https://readings.powerpal.net/api/v1/meter_reading/%s", this->powerpal_device_id_.c_str());
+
+  char payload[256];
+  snprintf(payload, sizeof(payload),
+           "[ {\"cost\":%.2f, \"is_peak\": false, \"pulses\":%u, \"timestamp\":%lu, \"watt_hours\":%.0f} ]",
+           cost, pulses, static_cast<unsigned long>(timestamp), watt_hours);
+
+  esp_http_client_config_t config = {};
+  config.url = url;
+  config.timeout_ms = 5000;
+
+  esp_http_client_handle_t client = esp_http_client_init(&config);
+  if (client == nullptr) {
+    ESP_LOGW(TAG, "Failed to initialise HTTP client");
+    return;
+  }
+  esp_http_client_set_method(client, HTTP_METHOD_POST);
+  esp_http_client_set_header(client, "Authorization", this->powerpal_apikey_.c_str());
+  esp_http_client_set_header(client, "Content-Type", "application/json");
+  esp_http_client_set_header(client, "Accept", "");
+  esp_http_client_set_post_field(client, payload, strlen(payload));
+
+  esp_err_t err = esp_http_client_perform(client);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "Upload to Powerpal failed: %s", esp_err_to_name(err));
+  } else {
+    ESP_LOGV(TAG, "Uploaded reading to Powerpal");
+  }
+  esp_http_client_cleanup(client);
 }
 
 
