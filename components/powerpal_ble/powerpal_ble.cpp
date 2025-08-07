@@ -333,7 +333,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
             }
           }
         } else {
-          // error, length should be 4
+          ESP_LOGW(TAG, "Unexpected reading_batch_size length (%d)", param->read.value_len);
         }
         break;
       }
