@@ -55,7 +55,7 @@ void Powerpal::setup() {
     }
 
     uint64_t stored_total = 0;
-    esp_err_t err = nvs_get_u64(this->nvs_handle_, "total", &stored_total);
+    err = nvs_get_u64(this->nvs_handle_, "total", &stored_total);
     if (err == ESP_OK) {
       this->total_pulses_ = stored_total;
       ESP_LOGI(TAG, "Loaded total_pulses: %llu", stored_total);
@@ -216,9 +216,9 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
                this->total_pulses_, this->daily_pulses_);
       nvs_set_u64(this->nvs_handle_, "total", this->total_pulses_);
       nvs_set_u64(this->nvs_handle_, "daily", this->daily_pulses_);
-      esp_err_t err = nvs_commit(this->nvs_handle_);
-      if (err != ESP_OK)
-        ESP_LOGE(TAG, "NVS commit failed (%d)", err);
+      esp_err_t nvs_err = nvs_commit(this->nvs_handle_);
+      if (nvs_err != ESP_OK)
+        ESP_LOGE(TAG, "NVS commit failed (%d)", nvs_err);
       this->last_commit_ts_ = now_s;
       this->last_pulses_for_threshold_ = this->total_pulses_;
     }
