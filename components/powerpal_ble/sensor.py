@@ -115,7 +115,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_DAILY_PULSES): sensor.sensor_schema(),
             cv.Optional(CONF_TIME_STAMP): sensor.sensor_schema(),
             cv.Optional(CONF_COST): sensor.sensor_schema(
-                accuracy_decimals=11
+                accuracy_decimals=2
             ),
             cv.Required(CONF_PAIRING_CODE): cv.int_range(min=1, max=999999),
             cv.Required(CONF_NOTIFICATION_INTERVAL): cv.int_range(min=1, max=60),
