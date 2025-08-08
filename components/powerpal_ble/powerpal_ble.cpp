@@ -16,6 +16,11 @@ namespace powerpal_ble {
 
 static const char *const TAG = "powerpal_ble";
 
+// Root CA certificate for readings.powerpal.net (Let's Encrypt ISRG Root X1)
+static const char powerpal_root_ca_pem[] = R"EOF(
+#include "certs/powerpal_root_ca.pem"
+)EOF";
+
 
 Powerpal::~Powerpal() {
   if (this->nvs_ok_) {
@@ -271,6 +276,7 @@ void Powerpal::upload_reading_(uint32_t timestamp, uint16_t pulses, float cost, 
   esp_http_client_config_t config = {};
   config.url = url;
   config.timeout_ms = 5000;
+  config.cert_pem = powerpal_root_ca_pem;
 
   esp_http_client_handle_t client = esp_http_client_init(&config);
   if (client == nullptr) {
