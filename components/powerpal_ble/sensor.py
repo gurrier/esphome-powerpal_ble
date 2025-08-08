@@ -32,6 +32,7 @@ CONF_PAIRING_CODE = "pairing_code"
 CONF_NOTIFICATION_INTERVAL = "notification_interval"
 CONF_PULSES_PER_KWH = "pulses_per_kwh"
 CONF_COST_PER_KWH = "cost_per_kwh"
+CONF_POWERPAL_CLOUD_UPLOADER = "powerpal_cloud_uploader"
 CONF_POWERPAL_DEVICE_ID = "powerpal_device_id"
 CONF_POWERPAL_APIKEY = "powerpal_apikey"
 CONF_DAILY_ENERGY = "daily_energy"
@@ -127,6 +128,7 @@ CONFIG_SCHEMA = cv.All(
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
             cv.Optional(CONF_COST_PER_KWH): cv.float_range(min=0),
+            cv.Optional(CONF_POWERPAL_CLOUD_UPLOADER, default=False): cv.boolean,
             cv.Optional(
                 CONF_POWERPAL_DEVICE_ID
             ): powerpal_deviceid,  # deviceid (optional) # if not configured, will grab from device
@@ -195,6 +197,8 @@ async def to_code(config):
 
     if CONF_COST_PER_KWH in config:
         cg.add(var.set_energy_cost(config[CONF_COST_PER_KWH]))
+
+    cg.add(var.set_powerpal_cloud_uploader(config[CONF_POWERPAL_CLOUD_UPLOADER]))
 
     if CONF_POWERPAL_DEVICE_ID in config:
         cg.add(var.set_device_id(config[CONF_POWERPAL_DEVICE_ID]))

@@ -73,6 +73,7 @@ public:
   void set_device_id(std::string powerpal_device_id) { powerpal_device_id_ = powerpal_device_id; }
   void set_apikey(std::string powerpal_apikey) { powerpal_apikey_ = powerpal_apikey; }
   void set_energy_cost(double energy_cost) { energy_cost_ = energy_cost; }
+  void set_powerpal_cloud_uploader(bool powerpal_cloud_uploader) { powerpal_cloud_uploader_ = powerpal_cloud_uploader; }
 
  protected:
   // Persisted daily pulses:
@@ -126,6 +127,7 @@ public:
   std::string powerpal_device_id_;
   std::string powerpal_apikey_;
   double energy_cost_{0.0};
+  bool powerpal_cloud_uploader_{false};
 
   uint16_t pairing_code_char_handle_ = 0x2e;
   uint16_t reading_batch_size_char_handle_ = 0x33;
