@@ -53,6 +53,8 @@ sensor:
     notification_interval: 1 # In seconds
     pulses_per_kwh: 1000
     time_id: homeassistant_time
+    powerpal_cloud_uploader: true # set to true to upload data to Powerpal
+    cost_per_kwh: 0.20 # dollars per kWh (optional)
     
 logger:
 #  level: DEBUG
