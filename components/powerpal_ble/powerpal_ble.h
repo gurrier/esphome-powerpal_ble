@@ -39,8 +39,8 @@ static const espbt::ESPBTUUID POWERPAL_BATTERY_CHARACTERISTIC_UUID = espbt::ESPB
 
 class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   // class Powerpal : public esphome::ble_client::BLEClientNode, public PollingComponent {
- public:
-  ~Powerpal() override;
+public:
+  ~Powerpal();
   void setup() override;
   // void loop() override;
   void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
