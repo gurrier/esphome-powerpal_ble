@@ -273,10 +273,15 @@ void Powerpal::upload_reading_(uint32_t timestamp, uint16_t pulses, float cost, 
   ESP_LOGD(TAG, "Upload URL: %s", url);
   ESP_LOGD(TAG, "Upload JSON: %s", payload);
 
+  size_t ca_cert_len = strlen(powerpal_root_ca_pem);
+  ESP_LOGD(TAG, "CA cert length: %u, begins with: %.30s",
+           static_cast<unsigned>(ca_cert_len), powerpal_root_ca_pem);
+
   esp_http_client_config_t config = {};
   config.url = url;
   config.timeout_ms = 5000;
   config.cert_pem = powerpal_root_ca_pem;
+  config.cert_len = ca_cert_len;
 
   esp_http_client_handle_t client = esp_http_client_init(&config);
   if (client == nullptr) {
