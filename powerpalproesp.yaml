@@ -19,7 +19,7 @@ time:
     id: homeassistant_time
 
 ble_client:
-  - mac_address: XX:XX:XX:XX:XX:XX # << EDIT HERE
+  - mac_address: !secret powerpal_mac_address # A1:B2:C3:D4:E5:F6 Your Powerpal MAC ADDRESS
     id: powerpal
 
 button:
@@ -49,7 +49,7 @@ sensor:
       name: "Powerpal Timestamp"
     cost:
       name: "Powerpal Cost"
-    pairing_code: 123456  # << EDIT HERE
+    pairing_code: !secret powerpal_pairing_code #123456 PUT THE 6 digit PAIRING CODE FOUND WITH YOUR POWERPAL HERE 
     notification_interval: 1 # In seconds
     pulses_per_kwh: 1000
     time_id: homeassistant_time
@@ -67,14 +67,14 @@ api:
 
 ota:
   platform: esphome
-  password: "XXXXXXXXXXXXXXXXXXXXX" # << EDIT HERE
+  password: !secret esphome_ota_password
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   ap:
     ssid: "Powerpal Fallback Hotspot"
-    password: "XXXXXXXX" # << EDIT HERE
+    password: !secret fallback_password
 
 web_server:
   port: 80
