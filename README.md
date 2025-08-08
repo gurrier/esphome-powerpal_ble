@@ -21,7 +21,7 @@ The ESPHome component hasn't been merged into esphome yet, but you can use it vi
 >
 > This feature works by retrieving the Powerpal authentication information (stored on the Powerpal device itself), and collects 15 measurements before uploading them to your Powerpal Cloud.
 >
-> This requires your energy cost per kWh in the configuration, and currently doesn't support peak/off-peak switching.
+> Enable uploading with `powerpal_cloud_uploader` in your configuration. Optionally provide your energy `cost_per_kwh` (0 is accepted) to include cost data. Peak/off-peak switching is currently unsupported.
 
 #### Requirements:
 - An ESP32
@@ -30,7 +30,7 @@ The ESPHome component hasn't been merged into esphome yet, but you can use it vi
   - BLE MAC address (can be found on device sticker, by ESPHome BLEtracker, or by using an app like nRF Connect once you have disabled the bluetooth of all your smart devices)
   - Connection pairing pin (6 digits you input when setting up your device, also can be found printed in Powerpal info pack, or inside the Powerpal application)
   - Your Smart meter pulse rate (eg. 1000 pulses = 1kW/h)
-  - Provide your `cost_per_kwh` to enable Powerpal cloud uploading. The component will automatically send each measurement to the Powerpal servers using the API key and device id stored on your Powerpal.
+  - Set `powerpal_cloud_uploader` to `true` to enable Powerpal cloud uploading. The component will automatically send each measurement to the Powerpal servers using the API key and device id stored on your Powerpal. Optionally provide `cost_per_kwh` to upload cost data.
 
 ```yaml
 external_components:
@@ -64,7 +64,8 @@ sensor:
     notification_interval: 1 # get updates every 1 minute
     pulses_per_kwh: 1000
     time_id: homeassistant_time # daily energy still works without a time_id, but recommended to include one to properly handle daylight savings, etc.
-#    cost_per_kwh: 0.20 #dollars per kWh
+    powerpal_cloud_uploader: true # set to true to upload data to Powerpal
+#    cost_per_kwh: 0.20 # dollars per kWh (optional)
 #    powerpal_device_id: 0000abcd #optional, component will retrieve from your Powerpal if not set
 #    powerpal_apikey: 4a89e298-b17b-43e7-a0c1-fcd1412e98ef #optional, component will retrieve from your Powerpal if not set
 ```
