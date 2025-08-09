@@ -17,8 +17,7 @@ namespace powerpal_ble {
 static const char *const TAG = "powerpal_ble";
 
 // Root CA certificate for readings.powerpal.net (Let's Encrypt ISRG Root X1)
-static const char powerpal_root_ca_pem[] = R"EOF(
------BEGIN CERTIFICATE-----
+static const char powerpal_root_ca_pem[] = R"EOF(-----BEGIN CERTIFICATE-----
 MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
 TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
 cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
