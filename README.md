@@ -31,8 +31,17 @@ The ESPHome component hasn't been merged into esphome yet, but you can use it vi
   - Connection pairing pin (6 digits you input when setting up your device, also can be found printed in Powerpal info pack, or inside the Powerpal application)
   - Your Smart meter pulse rate (eg. 1000 pulses = 1kW/h)
   - Set `powerpal_cloud_uploader` to `true` to enable Powerpal cloud uploading. The component will automatically send each measurement to the Powerpal servers using the API key and device id stored on your Powerpal. Optionally provide `cost_per_kwh` to upload cost data.
+  - When compiling with the ESP-IDF framework, enable the built-in certificate bundle (`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE` and `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL`) as shown below to allow TLS uploads without embedding a custom CA.
 
 ```yaml
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: y
+      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL: y
+
 external_components:
   - source: github://WeekendWarrior1/esphome@powerpal_ble
     # requires ble_client because I had to add some small features to authenticate properly
