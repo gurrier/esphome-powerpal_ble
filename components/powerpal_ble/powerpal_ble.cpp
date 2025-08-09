@@ -291,14 +291,18 @@ void Powerpal::upload_reading_(uint32_t timestamp, uint16_t pulses, float cost, 
   esp_http_client_set_method(client, HTTP_METHOD_POST);
   esp_http_client_set_header(client, "Authorization", this->powerpal_apikey_.c_str());
   esp_http_client_set_header(client, "Content-Type", "application/json");
-  esp_http_client_set_header(client, "Accept", "");
   esp_http_client_set_post_field(client, payload, strlen(payload));
 
   esp_err_t err = esp_http_client_perform(client);
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "Upload to Powerpal failed: %s", esp_err_to_name(err));
   } else {
-    ESP_LOGV(TAG, "Uploaded reading to Powerpal");
+    int status = esp_http_client_get_status_code(client);
+    if (status < 200 || status >= 300) {
+      ESP_LOGW(TAG, "Upload to Powerpal failed, status: %d", status);
+    } else {
+      ESP_LOGV(TAG, "Uploaded reading to Powerpal (status %d)", status);
+    }
   }
   esp_http_client_cleanup(client);
 }
