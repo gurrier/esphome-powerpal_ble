@@ -302,7 +302,7 @@ void Powerpal::upload_reading_(uint32_t timestamp, uint16_t pulses, float cost, 
   ESP_LOGD(TAG, "Upload URL: %s", url);
   ESP_LOGD(TAG, "Upload JSON: %s", payload);
 
-  size_t ca_cert_len = strlen(powerpal_root_ca_pem);
+  size_t ca_cert_len = strlen(powerpal_root_ca_pem) + 1;  // include null terminator
   ESP_LOGD(TAG, "CA cert length: %u, begins with: %.30s",
            static_cast<unsigned>(ca_cert_len), powerpal_root_ca_pem);
 
