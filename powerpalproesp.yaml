@@ -6,6 +6,9 @@ esp32:
   board: esp32dev
   framework:
     type: esp-idf
+    sdkconfig_options:
+      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: y
+      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL: y
 
 external_components:
   - source:
