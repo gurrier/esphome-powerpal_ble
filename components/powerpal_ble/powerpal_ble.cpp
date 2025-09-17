@@ -239,7 +239,7 @@ bool Powerpal::register_for_measurement_notifications_() {
   return true;
 }
 
-void Powerpal::on_connect() {
+void Powerpal::handle_connect_() {
   if (this->parent_ == nullptr)
     return;
 
@@ -253,7 +253,7 @@ void Powerpal::on_connect() {
   this->attempt_subscription_(POWERPAL_HANDSHAKE_RETRY_MS);
 }
 
-void Powerpal::on_disconnect() {
+void Powerpal::handle_disconnect_() {
   if (this->parent_ == nullptr)
     return;
 
@@ -490,10 +490,19 @@ std::string Powerpal::serial_to_apikey_(const uint8_t *data, uint16_t length) {
 void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                                    esp_ble_gattc_cb_param_t *param) {
   switch (event) {
+    case ESP_GATTC_CONNECT_EVT: {
+      if (this->parent_ != nullptr) {
+        ESP_LOGI(TAG, "[%s] ESP_GATTC_CONNECT_EVT", this->parent_->address_str().c_str());
+        this->handle_connect_();
+      } else {
+        ESP_LOGW(TAG, "ESP_GATTC_CONNECT_EVT received without an active parent");
+      }
+      break;
+    }
     case ESP_GATTC_DISCONNECT_EVT: {
       if (this->parent_ != nullptr) {
         ESP_LOGW(TAG, "[%s] ESP_GATTC_DISCONNECT_EVT", this->parent_->address_str().c_str());
-        this->on_disconnect();
+        this->handle_disconnect_();
       } else {
         ESP_LOGW(TAG, "ESP_GATTC_DISCONNECT_EVT received without an active parent");
         this->clear_connection_state_();
