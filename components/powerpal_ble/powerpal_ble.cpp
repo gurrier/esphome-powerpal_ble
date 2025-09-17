@@ -294,14 +294,6 @@ void Powerpal::handle_disconnect_() {
   this->schedule_reconnect_();
 }
 
-void Powerpal::on_connect() {
-  this->handle_connect_();
-}
-
-void Powerpal::on_disconnect() {
-  this->handle_disconnect_();
-}
-
 
 std::string Powerpal::pkt_to_hex_(const uint8_t *data, uint16_t len) {
   std::string ret;
