@@ -46,6 +46,8 @@ public:
   void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                            esp_ble_gattc_cb_param_t *param) override;
   void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) override;
+  void on_connect() override;
+  void on_disconnect() override;
   void dump_config() override;
   // float get_setup_priority() const override { return setup_priority::DATA; }
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
@@ -76,6 +78,11 @@ public:
   void set_powerpal_cloud_uploader(bool powerpal_cloud_uploader) { powerpal_cloud_uploader_ = powerpal_cloud_uploader; }
 
  protected:
+  void clear_connection_state_();
+  void schedule_reconnect_();
+  void attempt_subscription_(uint32_t delay_ms = 0);
+  bool register_for_measurement_notifications_();
+
   // Persisted daily pulses:
   nvs_handle_t nvs_handle_;
   bool nvs_ok_{false};
@@ -138,9 +145,16 @@ public:
   uint16_t firmware_char_handle_ = 0x3b;
   uint16_t uuid_char_handle_ = 0x28;
   uint16_t serial_number_char_handle_ = 0x2b;
+
+  bool service_discovered_{false};
+  bool auth_complete_{false};
+  bool measurement_notify_registered_{false};
+  bool pairing_code_write_inflight_{false};
+  bool handshake_in_progress_{false};
+  bool reconnect_scheduled_{false};
 };
 
-}  
-}  
+}
+}
 
 #endif
