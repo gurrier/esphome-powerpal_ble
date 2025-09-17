@@ -7,6 +7,7 @@
 #include <ctime>
 #include <time.h>
 #include <esp_http_client.h>
+#include <esp_gatt_defs.h>
 #include <nvs.h>
 #include <nvs_flash.h>
 #include "esp_crt_bundle.h"
@@ -141,6 +142,7 @@ void Powerpal::clear_connection_state_() {
   this->pairing_code_char_handle_ = 0;
   this->reading_batch_size_char_handle_ = 0;
   this->measurement_char_handle_ = 0;
+  this->measurement_cccd_handle_ = 0;
   this->battery_char_handle_ = 0;
   this->uuid_char_handle_ = 0;
   this->serial_number_char_handle_ = 0;
@@ -288,9 +290,15 @@ bool Powerpal::register_for_measurement_notifications_() {
     return false;
   }
 
-  ESP_LOGI(TAG, "[%s] Measurement notifications enabled", this->parent_->address_str().c_str());
-  this->measurement_notify_registered_ = true;
-  this->handshake_in_progress_ = false;
+  if (this->measurement_cccd_handle_ == 0) {
+    ESP_LOGW(TAG, "[%s] Measurement CCC descriptor missing; assuming notifications are active",
+             this->parent_->address_str().c_str());
+    this->measurement_notify_registered_ = true;
+    this->handshake_in_progress_ = false;
+  } else {
+    ESP_LOGI(TAG, "[%s] Measurement notification registration requested; waiting for CCC write",
+             this->parent_->address_str().c_str());
+  }
   return true;
 }
 
@@ -611,6 +619,14 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_MEASUREMENT_UUID)) {
         this->measurement_char_handle_ = ch->handle;
         ESP_LOGI(TAG, "  → measurement handle = 0x%02x", ch->handle);
+
+        this->measurement_cccd_handle_ = 0;
+        if (auto *ccc = ch->get_descriptor(espbt::ESPBTUUID::from_uint16(ESP_GATT_UUID_CHAR_CLIENT_CONFIG))) {
+          this->measurement_cccd_handle_ = ccc->handle;
+          ESP_LOGI(TAG, "    → measurement CCC handle = 0x%02x", ccc->handle);
+        } else {
+          ESP_LOGW(TAG, "    ! measurement CCC descriptor not found");
+        }
       } else {
         ESP_LOGE(TAG, "  ! measurement characteristic not found");
       }
@@ -830,6 +846,72 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
                this->parent_->address_str().c_str(), param->write.handle);
       break;
     }  // ESP_GATTC_WRITE_CHAR_EVT
+
+    case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
+      if (this->parent_ == nullptr)
+        break;
+
+      ESP_LOGD(TAG, "[%s] ESP_GATTC_REG_FOR_NOTIFY_EVT status=%d handle=0x%02x",
+               this->parent_->address_str().c_str(), param->reg_for_notify.status,
+               param->reg_for_notify.handle);
+
+      if (param->reg_for_notify.handle == this->measurement_char_handle_) {
+        if (param->reg_for_notify.status != ESP_GATT_OK) {
+          ESP_LOGW(TAG, "[%s] Failed to register for measurement notifications, status=%d",
+                   this->parent_->address_str().c_str(), param->reg_for_notify.status);
+          this->measurement_notify_registered_ = false;
+          this->handshake_in_progress_ = false;
+          this->attempt_subscription_(POWERPAL_NOTIFY_RETRY_MS * 2);
+          break;
+        }
+
+        if (this->measurement_cccd_handle_ == 0) {
+          ESP_LOGW(TAG,
+                   "[%s] Measurement CCC descriptor unavailable after registration; assuming notifications active",
+                   this->parent_->address_str().c_str());
+          this->measurement_notify_registered_ = true;
+          this->handshake_in_progress_ = false;
+        } else {
+          ESP_LOGI(TAG, "[%s] Writing measurement CCC descriptor to enable notifications",
+                   this->parent_->address_str().c_str());
+          uint8_t enable_notify[2] = {0x01, 0x00};
+          esp_err_t status = esp_ble_gattc_write_char_descr(
+              this->parent_->get_gattc_if(), this->parent_->get_conn_id(), this->measurement_cccd_handle_,
+              sizeof(enable_notify), enable_notify, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+          if (status != ESP_OK) {
+            ESP_LOGW(TAG, "[%s] Failed to write measurement CCC descriptor, status=%d",
+                     this->parent_->address_str().c_str(), status);
+            this->measurement_notify_registered_ = false;
+            this->handshake_in_progress_ = false;
+            this->attempt_subscription_(POWERPAL_NOTIFY_RETRY_MS * 2);
+          }
+        }
+      }
+      break;
+    }
+
+    case ESP_GATTC_WRITE_DESCR_EVT: {
+      if (this->parent_ == nullptr)
+        break;
+
+      ESP_LOGD(TAG, "[%s] ESP_GATTC_WRITE_DESCR_EVT status=%d handle=0x%02x",
+               this->parent_->address_str().c_str(), param->write.status, param->write.handle);
+
+      if (param->write.handle == this->measurement_cccd_handle_) {
+        if (param->write.status != ESP_GATT_OK) {
+          ESP_LOGW(TAG, "[%s] Failed to enable measurement notifications via CCC write, status=%d",
+                   this->parent_->address_str().c_str(), param->write.status);
+          this->measurement_notify_registered_ = false;
+          this->handshake_in_progress_ = false;
+          this->attempt_subscription_(POWERPAL_NOTIFY_RETRY_MS * 2);
+        } else {
+          ESP_LOGI(TAG, "[%s] Measurement notifications enabled", this->parent_->address_str().c_str());
+          this->measurement_notify_registered_ = true;
+          this->handshake_in_progress_ = false;
+        }
+      }
+      break;
+    }
 
     case ESP_GATTC_NOTIFY_EVT: {
       ESP_LOGD(TAG, "[%s] Received Notification", this->parent_->address_str().c_str());
