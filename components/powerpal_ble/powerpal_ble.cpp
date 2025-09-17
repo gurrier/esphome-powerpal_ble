@@ -132,6 +132,7 @@ bool Powerpal::is_parent_connected_() const {
 void Powerpal::clear_connection_state_() {
   this->authenticated_ = false;
   this->service_discovered_ = false;
+  this->service_discovery_in_progress_ = false;
   this->auth_complete_ = false;
   this->measurement_notify_registered_ = false;
   this->pairing_code_write_inflight_ = false;
@@ -141,8 +142,6 @@ void Powerpal::clear_connection_state_() {
   this->reading_batch_size_char_handle_ = 0;
   this->measurement_char_handle_ = 0;
   this->battery_char_handle_ = 0;
-  this->led_sensitivity_char_handle_ = 0;
-  this->firmware_char_handle_ = 0;
   this->uuid_char_handle_ = 0;
   this->serial_number_char_handle_ = 0;
 }
@@ -172,6 +171,32 @@ void Powerpal::schedule_reconnect_() {
   });
 }
 
+bool Powerpal::start_service_discovery_() {
+  if (this->parent_ == nullptr)
+    return false;
+
+  if (!this->is_parent_connected_()) {
+    ESP_LOGV(TAG, "[%s] Cannot start service discovery while disconnected", this->parent_->address_str().c_str());
+    return false;
+  }
+
+  if (this->service_discovery_in_progress_) {
+    ESP_LOGV(TAG, "[%s] Service discovery already in progress", this->parent_->address_str().c_str());
+    return true;
+  }
+
+  ESP_LOGI(TAG, "[%s] Starting GATT service discovery", this->parent_->address_str().c_str());
+  esp_err_t status =
+      esp_ble_gattc_search_service(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), nullptr);
+  if (status != ESP_OK) {
+    ESP_LOGW(TAG, "[%s] Failed to start service discovery (status=%d)", this->parent_->address_str().c_str(), status);
+    return false;
+  }
+
+  this->service_discovery_in_progress_ = true;
+  return true;
+}
+
 void Powerpal::attempt_subscription_(uint32_t delay_ms) {
   this->set_timeout("powerpal_ble_handshake", delay_ms, [this]() {
     if (this->parent_ == nullptr)
@@ -191,6 +216,7 @@ void Powerpal::attempt_subscription_(uint32_t delay_ms) {
 
     if (!this->service_discovered_) {
       ESP_LOGV(TAG, "[%s] Waiting for service discovery", this->parent_->address_str().c_str());
+      this->start_service_discovery_();
       this->attempt_subscription_(POWERPAL_HANDSHAKE_RETRY_MS);
       return;
     }
@@ -211,6 +237,7 @@ void Powerpal::attempt_subscription_(uint32_t delay_ms) {
         this->measurement_char_handle_ == 0) {
       ESP_LOGW(TAG, "[%s] Characteristic handles missing, retrying discovery",
                this->parent_->address_str().c_str());
+      this->start_service_discovery_();
       this->attempt_subscription_(POWERPAL_HANDSHAKE_RETRY_MS);
       return;
     }
@@ -272,12 +299,12 @@ void Powerpal::handle_connect_() {
     return;
 
   ESP_LOGI(TAG, "[%s] Connected to Powerpal", this->parent_->address_str().c_str());
-  this->auth_complete_ = false;
-  this->service_discovered_ = false;
-  this->measurement_notify_registered_ = false;
-  this->handshake_in_progress_ = false;
-  this->pairing_code_write_inflight_ = false;
+  this->cancel_timeout("powerpal_ble_reconnect");
+  this->clear_connection_state_();
   this->reconnect_scheduled_ = false;
+
+  // Kick off a fresh service discovery and pairing handshake so notifications resume.
+  this->start_service_discovery_();
   this->attempt_subscription_(POWERPAL_HANDSHAKE_RETRY_MS);
 }
 
@@ -286,6 +313,7 @@ void Powerpal::handle_disconnect_() {
     return;
 
   ESP_LOGW(TAG, "[%s] Disconnected from Powerpal", this->parent_->address_str().c_str());
+  this->cancel_timeout("powerpal_ble_handshake");
   this->clear_connection_state_();
   this->schedule_reconnect_();
 }
@@ -538,7 +566,30 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       break;
     }
     case ESP_GATTC_SEARCH_CMPL_EVT: {
-      ESP_LOGI(TAG, "POWERPAL: services discovered, looking up characteristic handles…");
+      this->service_discovery_in_progress_ = false;
+
+      if (this->parent_ == nullptr) {
+        ESP_LOGW(TAG, "Service discovery completed without an active parent");
+        break;
+      }
+
+      if (param->search_cmpl.status != ESP_GATT_OK) {
+        ESP_LOGW(TAG, "[%s] Service discovery failed, status=%d", this->parent_->address_str().c_str(),
+                 param->search_cmpl.status);
+        this->service_discovered_ = false;
+        this->attempt_subscription_(POWERPAL_HANDSHAKE_RETRY_MS);
+        break;
+      }
+
+      ESP_LOGI(TAG, "[%s] POWERPAL: services discovered, looking up characteristic handles…",
+               this->parent_->address_str().c_str());
+
+      this->pairing_code_char_handle_ = 0;
+      this->reading_batch_size_char_handle_ = 0;
+      this->measurement_char_handle_ = 0;
+      this->battery_char_handle_ = 0;
+      this->uuid_char_handle_ = 0;
+      this->serial_number_char_handle_ = 0;
 
       // Pairing Code
       if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_PAIRING_CODE_UUID)) {
@@ -572,6 +623,14 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_SERIAL_UUID)) {
         this->serial_number_char_handle_ = ch->handle;
         ESP_LOGI(TAG, "  → serial handle = 0x%02x", ch->handle);
+      }
+
+      if (auto *battery_ch =
+              this->parent_->get_characteristic(POWERPAL_BATTERY_SERVICE_UUID, POWERPAL_BATTERY_CHARACTERISTIC_UUID)) {
+        this->battery_char_handle_ = battery_ch->handle;
+        ESP_LOGI(TAG, "  → battery handle = 0x%02x", battery_ch->handle);
+      } else {
+        ESP_LOGW(TAG, "  ! battery characteristic not found");
       }
 
       this->service_discovered_ = true;
@@ -674,62 +733,89 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
         this->authenticated_ = true;
         this->pairing_code_write_inflight_ = false;
 
-        auto read_reading_batch_size_status =
-            esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                    this->reading_batch_size_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-        if (read_reading_batch_size_status) {
-          ESP_LOGW(TAG, "Error sending read request for reading batch size, status=%d", read_reading_batch_size_status);
-          this->handshake_in_progress_ = false;
-          this->attempt_subscription_(POWERPAL_HANDSHAKE_RETRY_MS * 2);
+        if (this->reading_batch_size_char_handle_ != 0) {
+          auto read_reading_batch_size_status =
+              esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                      this->reading_batch_size_char_handle_, ESP_GATT_AUTH_REQ_NONE);
+          if (read_reading_batch_size_status) {
+            ESP_LOGW(TAG, "Error sending read request for reading batch size, status=%d",
+                     read_reading_batch_size_status);
+            this->handshake_in_progress_ = false;
+            this->attempt_subscription_(POWERPAL_HANDSHAKE_RETRY_MS * 2);
+          }
+        } else {
+          ESP_LOGW(TAG, "[%s] Reading batch size handle unavailable", this->parent_->address_str().c_str());
         }
 
         if (!this->powerpal_apikey_.length()) {
-          // read uuid (apikey)
-          auto read_uuid_status = esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+          if (this->uuid_char_handle_ != 0) {
+            // read uuid (apikey)
+            auto read_uuid_status = esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
                                                             this->uuid_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-          if (read_uuid_status) {
-            ESP_LOGW(TAG, "Error sending read request for powerpal uuid, status=%d", read_uuid_status);
+            if (read_uuid_status) {
+              ESP_LOGW(TAG, "Error sending read request for powerpal uuid, status=%d", read_uuid_status);
+            }
+          } else {
+            ESP_LOGW(TAG, "[%s] Powerpal UUID handle unavailable", this->parent_->address_str().c_str());
           }
         }
         if (!this->powerpal_device_id_.length()) {
-          // read serial number (device id)
-          auto read_serial_number_status = esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                                            this->serial_number_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-          if (read_serial_number_status) {
-            ESP_LOGW(TAG, "Error sending read request for powerpal serial number, status=%d", read_serial_number_status);
+          if (this->serial_number_char_handle_ != 0) {
+            // read serial number (device id)
+            auto read_serial_number_status =
+                esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                        this->serial_number_char_handle_, ESP_GATT_AUTH_REQ_NONE);
+            if (read_serial_number_status) {
+              ESP_LOGW(TAG, "Error sending read request for powerpal serial number, status=%d",
+                       read_serial_number_status);
+            }
+          } else {
+            ESP_LOGW(TAG, "[%s] Powerpal serial number handle unavailable", this->parent_->address_str().c_str());
           }
         }
 
         if (this->battery_ != nullptr) {
-          // read battery
-          auto read_battery_status = esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                                             this->battery_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-          if (read_battery_status) {
-            ESP_LOGW(TAG, "Error sending read request for battery, status=%d", read_battery_status);
-          }
-          // Enable notifications for battery
-          auto notify_battery_status = esp_ble_gattc_register_for_notify(
-              this->parent_->get_gattc_if(), this->parent_->get_remote_bda(), this->battery_char_handle_);
-          if (notify_battery_status) {
-            ESP_LOGW(TAG, "[%s] esp_ble_gattc_register_for_notify failed, status=%d",
-                     this->parent_->address_str().c_str(), notify_battery_status);
+          if (this->battery_char_handle_ != 0) {
+            // read battery
+            auto read_battery_status = esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                                               this->battery_char_handle_, ESP_GATT_AUTH_REQ_NONE);
+            if (read_battery_status) {
+              ESP_LOGW(TAG, "Error sending read request for battery, status=%d", read_battery_status);
+            }
+            // Enable notifications for battery
+            auto notify_battery_status = esp_ble_gattc_register_for_notify(
+                this->parent_->get_gattc_if(), this->parent_->get_remote_bda(), this->battery_char_handle_);
+            if (notify_battery_status) {
+              ESP_LOGW(TAG, "[%s] esp_ble_gattc_register_for_notify failed, status=%d",
+                       this->parent_->address_str().c_str(), notify_battery_status);
+            }
+          } else {
+            ESP_LOGW(TAG, "[%s] Battery characteristic handle unavailable", this->parent_->address_str().c_str());
           }
         }
 
-        // read firmware version
-        auto read_firmware_status =
-            esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                    this->firmware_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-        if (read_firmware_status) {
-          ESP_LOGW(TAG, "Error sending read request for led sensitivity, status=%d", read_firmware_status);
+        if (this->firmware_char_handle_ != 0) {
+          // read firmware version
+          auto read_firmware_status =
+              esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                      this->firmware_char_handle_, ESP_GATT_AUTH_REQ_NONE);
+          if (read_firmware_status) {
+            ESP_LOGW(TAG, "Error sending read request for firmware version, status=%d", read_firmware_status);
+          }
+        } else {
+          ESP_LOGW(TAG, "[%s] Firmware characteristic handle unavailable", this->parent_->address_str().c_str());
         }
 
-        // read led sensitivity
-        auto read_led_sensitivity_status =
-            esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                    this->led_sensitivity_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-        if (read_led_sensitivity_status) {
-          ESP_LOGW(TAG, "Error sending read request for led sensitivity, status=%d", read_led_sensitivity_status);
+        if (this->led_sensitivity_char_handle_ != 0) {
+          // read led sensitivity
+          auto read_led_sensitivity_status =
+              esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                      this->led_sensitivity_char_handle_, ESP_GATT_AUTH_REQ_NONE);
+          if (read_led_sensitivity_status) {
+            ESP_LOGW(TAG, "Error sending read request for led sensitivity, status=%d", read_led_sensitivity_status);
+          }
+        } else {
+          ESP_LOGW(TAG, "[%s] LED sensitivity characteristic handle unavailable", this->parent_->address_str().c_str());
         }
 
         break;
