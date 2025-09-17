@@ -2,18 +2,43 @@
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 
-#include <nvs_flash.h>
-#include <nvs.h>
-#include <ctime>
-#include <time.h>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <time.h>
+#include <type_traits>
+#include <utility>
 #include <esp_http_client.h>
+#include <nvs.h>
+#include <nvs_flash.h>
 #include "esp_crt_bundle.h"
 
 #ifdef USE_ESP32
 namespace esphome {
 namespace powerpal_ble {
+
+namespace {
+
+template<typename...>
+using void_t = void;
+
+template<typename T, typename = void>
+struct has_connected_member : std::false_type {};
+
+template<typename T>
+struct has_connected_member<T, void_t<decltype(std::declval<const T &>().connected)>> : std::true_type {};
+
+template<typename Client>
+bool client_connected(Client *client, std::true_type) {
+  return client->connected;
+}
+
+template<typename Client>
+bool client_connected(Client *client, std::false_type) {
+  return client->is_connected();
+}
+
+}  // namespace
 
 static const char *const TAG = "powerpal_ble";
 static constexpr uint32_t POWERPAL_RECONNECT_DELAY_MS = 10000;
@@ -101,6 +126,13 @@ void Powerpal::setup() {
 
 }
 
+bool Powerpal::is_parent_connected_() const {
+  if (this->parent_ == nullptr)
+    return false;
+
+  return client_connected(this->parent_, has_connected_member<ble_client::BLEClient>{});
+}
+
 void Powerpal::clear_connection_state_() {
   this->authenticated_ = false;
   this->service_discovered_ = false;
@@ -134,7 +166,7 @@ void Powerpal::schedule_reconnect_() {
     if (this->parent_ == nullptr)
       return;
 
-    if (this->parent_->connected) {
+    if (this->is_parent_connected_()) {
       ESP_LOGV(TAG, "[%s] Reconnect timer fired but already connected", this->parent_->address_str().c_str());
       return;
     }
@@ -149,7 +181,7 @@ void Powerpal::attempt_subscription_(uint32_t delay_ms) {
     if (this->parent_ == nullptr)
       return;
 
-    if (!this->parent_->connected) {
+    if (!this->is_parent_connected_()) {
       ESP_LOGV(TAG, "[%s] Not connected, waiting before attempting resubscribe",
                this->parent_->address_str().c_str());
       return;
@@ -260,6 +292,14 @@ void Powerpal::handle_disconnect_() {
   ESP_LOGW(TAG, "[%s] Disconnected from Powerpal", this->parent_->address_str().c_str());
   this->clear_connection_state_();
   this->schedule_reconnect_();
+}
+
+void Powerpal::on_connect() {
+  this->handle_connect_();
+}
+
+void Powerpal::on_disconnect() {
+  this->handle_disconnect_();
 }
 
 
