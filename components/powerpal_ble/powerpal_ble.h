@@ -81,6 +81,7 @@ protected:
   void handle_disconnect_();
   void clear_connection_state_();
   void schedule_reconnect_();
+  bool start_service_discovery_();
   void attempt_subscription_(uint32_t delay_ms = 0);
   bool register_for_measurement_notifications_();
 
@@ -148,6 +149,7 @@ protected:
   uint16_t serial_number_char_handle_ = 0x2b;
 
   bool service_discovered_{false};
+  bool service_discovery_in_progress_{false};
   bool auth_complete_{false};
   bool measurement_notify_registered_{false};
   bool pairing_code_write_inflight_{false};
