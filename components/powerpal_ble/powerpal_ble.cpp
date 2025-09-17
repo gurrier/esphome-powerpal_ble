@@ -134,7 +134,7 @@ void Powerpal::schedule_reconnect_() {
     if (this->parent_ == nullptr)
       return;
 
-    if (this->parent_->is_connected()) {
+    if (this->parent_->connected) {
       ESP_LOGV(TAG, "[%s] Reconnect timer fired but already connected", this->parent_->address_str().c_str());
       return;
     }
@@ -149,7 +149,7 @@ void Powerpal::attempt_subscription_(uint32_t delay_ms) {
     if (this->parent_ == nullptr)
       return;
 
-    if (!this->parent_->is_connected()) {
+    if (!this->parent_->connected) {
       ESP_LOGV(TAG, "[%s] Not connected, waiting before attempting resubscribe",
                this->parent_->address_str().c_str());
       return;
