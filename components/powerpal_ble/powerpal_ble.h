@@ -46,8 +46,6 @@ public:
   void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                            esp_ble_gattc_cb_param_t *param) override;
   void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) override;
-  void on_connect() override;
-  void on_disconnect() override;
   void dump_config() override;
   // float get_setup_priority() const override { return setup_priority::DATA; }
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
@@ -77,7 +75,9 @@ public:
   void set_energy_cost(double energy_cost) { energy_cost_ = energy_cost; }
   void set_powerpal_cloud_uploader(bool powerpal_cloud_uploader) { powerpal_cloud_uploader_ = powerpal_cloud_uploader; }
 
- protected:
+protected:
+  void handle_connect_();
+  void handle_disconnect_();
   void clear_connection_state_();
   void schedule_reconnect_();
   void attempt_subscription_(uint32_t delay_ms = 0);
