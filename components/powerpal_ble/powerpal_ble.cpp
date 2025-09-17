@@ -6,8 +6,6 @@
 #include <cstring>
 #include <ctime>
 #include <time.h>
-#include <type_traits>
-#include <utility>
 #include <esp_http_client.h>
 #include <nvs.h>
 #include <nvs_flash.h>
@@ -19,24 +17,22 @@ namespace powerpal_ble {
 
 namespace {
 
-template<typename...>
-using void_t = void;
-
-template<typename T, typename = void>
-struct has_connected_member : std::false_type {};
-
-template<typename T>
-struct has_connected_member<T, void_t<decltype(std::declval<const T &>().connected)>> : std::true_type {};
-
 template<typename Client>
-bool client_connected(Client *client, std::true_type) {
-  return client->connected;
+auto client_connected(Client *client, int) -> decltype(bool(client->connected)) {
+  return bool(client->connected);
 }
 
 template<typename Client>
-bool client_connected(Client *client, std::false_type) {
-  return client->is_connected();
+auto client_connected(Client *client, long) -> decltype(bool(client->connected())) {
+  return bool(client->connected());
 }
+
+template<typename Client>
+auto client_connected(Client *client, long long) -> decltype(bool(client->is_connected())) {
+  return bool(client->is_connected());
+}
+
+inline bool client_connected(...) { return false; }
 
 }  // namespace
 
@@ -130,7 +126,7 @@ bool Powerpal::is_parent_connected_() const {
   if (this->parent_ == nullptr)
     return false;
 
-  return client_connected(this->parent_, has_connected_member<ble_client::BLEClient>{});
+  return client_connected(this->parent_, 0);
 }
 
 void Powerpal::clear_connection_state_() {
