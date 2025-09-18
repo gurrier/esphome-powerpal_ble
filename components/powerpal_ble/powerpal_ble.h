@@ -125,7 +125,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void reset_connection_state_();
 
 
-  bool authenticated_;
+  bool authenticated_{false};
   bool pending_subscription_{false};
   bool subscription_in_progress_{false};
   bool subscription_retry_scheduled_{false};
@@ -149,17 +149,17 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   uint16_t day_of_last_measurement_{0};
   uint32_t last_measurement_timestamp_s_{0};
 
-  uint8_t pairing_code_[4];
+  uint8_t pairing_code_[4]{0x00, 0x00, 0x00, 0x00};
   uint8_t reading_batch_size_[4] = {0x01, 0x00, 0x00, 0x00};
-  float pulses_per_kwh_;
-  float pulse_multiplier_;
+  float pulses_per_kwh_{1.0f};
+  float pulse_multiplier_{0.0f};
   
 
   uint8_t stored_measurements_count_{0};
   std::vector<PowerpalMeasurement> stored_measurements_;
   std::string powerpal_device_id_; 
-  std::string powerpal_apikey_; 
-  double energy_cost_;
+  std::string powerpal_apikey_;
+  double energy_cost_{0.0};
 
   uint16_t pairing_code_char_handle_{0};
   uint16_t reading_batch_size_char_handle_{0};
