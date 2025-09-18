@@ -80,7 +80,12 @@ void Powerpal::on_disconnect() {
 
 void Powerpal::setup() {
   this->authenticated_ = false;
-  this->pulse_multiplier_ = ((seconds_in_minute * this->reading_batch_size_[0]) / (this->pulses_per_kwh_ / kw_to_w_conversion));
+  if (this->pulses_per_kwh_ <= 0.0f) {
+    ESP_LOGW(TAG, "Invalid pulses_per_kwh configured (%.3f); defaulting to 1.0", this->pulses_per_kwh_);
+    this->pulses_per_kwh_ = 1.0f;
+  }
+  this->pulse_multiplier_ =
+      ((seconds_in_minute * this->reading_batch_size_[0]) / (this->pulses_per_kwh_ / kw_to_w_conversion));
   
     // ——— NVS init & load ———
   esp_err_t err = nvs_flash_init();
@@ -144,11 +149,17 @@ void Powerpal::setup() {
 
 
 std::string Powerpal::pkt_to_hex_(const uint8_t *data, uint16_t len) {
-  char buf[64];
-  memset(buf, 0, 64);
-  for (int i = 0; i < len; i++)
-    sprintf(&buf[i * 2], "%02x", data[i]);
-  std::string ret = buf;
+  if (data == nullptr || len == 0)
+    return {};
+
+  static constexpr char HEXMAP[] = "0123456789abcdef";
+  std::string ret;
+  ret.reserve(static_cast<size_t>(len) * 2);
+  for (uint16_t i = 0; i < len; i++) {
+    uint8_t byte = data[i];
+    ret.push_back(HEXMAP[(byte >> 4) & 0x0F]);
+    ret.push_back(HEXMAP[byte & 0x0F]);
+  }
   return ret;
 }
 
@@ -159,14 +170,27 @@ void Powerpal::decode_(const uint8_t *data, uint16_t length) {
 
 void Powerpal::parse_battery_(const uint8_t *data, uint16_t length) {
   ESP_LOGD(TAG, "Battery: DEC(%d): 0x%s", length, this->pkt_to_hex_(data, length).c_str());
-  if (length == 1) {
-    this->battery_->publish_state(data[0]);
+  if (length != 1) {
+    ESP_LOGW(TAG, "Unexpected battery payload length %hu", length);
+    return;
   }
+
+  if (this->battery_ == nullptr) {
+    ESP_LOGV(TAG, "Battery data received but no battery sensor configured");
+    return;
+  }
+
+  this->battery_->publish_state(data[0]);
 }
 
 void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   if (length < 6) {
     ESP_LOGW(TAG, "parse_measurement_: packet too short (%hu)", length);
+    return;
+  }
+
+  if (this->pulses_per_kwh_ <= 0.0f) {
+    ESP_LOGW(TAG, "pulses_per_kwh must be greater than zero; skipping measurement");
     return;
   }
 
@@ -178,20 +202,28 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   time_t unix_time = time_t(t32);
 
   // 2) Determine day-of-year for rollover
-  int today;
+  int today = 0;
+  bool have_valid_day = false;
 #ifdef USE_TIME
-  auto *time_comp = *this->time_;
-  auto now = time_comp->now();
-  if (now.is_valid()) {
-    today = now.day_of_year;
-  } else {
+  if (this->time_.has_value() && *this->time_ != nullptr) {
+    auto *time_comp = *this->time_;
+    auto now = time_comp->now();
+    if (now.is_valid()) {
+      today = now.day_of_year;
+      have_valid_day = true;
+    } else {
+      ESP_LOGV(TAG, "RTC time invalid, using measurement timestamp");
+    }
+  }
+#endif
+  if (!have_valid_day) {
     struct tm *tm_info = ::localtime(&unix_time);
+    if (tm_info == nullptr) {
+      ESP_LOGW(TAG, "localtime conversion failed for timestamp %u", static_cast<unsigned>(t32));
+      return;
+    }
     today = tm_info->tm_yday + 1;
   }
-#else
-  struct tm *tm_info = ::localtime(&unix_time);
-  today = tm_info->tm_yday + 1;
-#endif
 
   // 3) First-measurement vs midnight-rollover
   if (this->day_of_last_measurement_ == 0) {
@@ -279,24 +311,34 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
 
 
 std::string Powerpal::uuid_to_device_id_(const uint8_t *data, uint16_t length) {
-  const char* hexmap[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"};
+  if (data == nullptr || length == 0)
+    return {};
+
+  static constexpr char HEXMAP[] = "0123456789abcdef";
   std::string device_id;
-  for (int i = length-1; i >= 0; i--) {
-    device_id.append(hexmap[(data[i] & 0xF0) >> 4]);
-    device_id.append(hexmap[data[i] & 0x0F]);
+  device_id.reserve(static_cast<size_t>(length) * 2);
+  for (int i = static_cast<int>(length) - 1; i >= 0; i--) {
+    uint8_t byte = data[i];
+    device_id.push_back(HEXMAP[(byte & 0xF0) >> 4]);
+    device_id.push_back(HEXMAP[byte & 0x0F]);
   }
   return device_id;
 }
 
 std::string Powerpal::serial_to_apikey_(const uint8_t *data, uint16_t length) {
-  const char* hexmap[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"};
+  if (data == nullptr || length == 0)
+    return {};
+
+  static constexpr char HEXMAP[] = "0123456789abcdef";
   std::string api_key;
-  for (int i = 0; i < length; i++) {
-    if ( i == 4 || i == 6 || i == 8 || i == 10 ) {
-      api_key.append("-");
+  api_key.reserve(static_cast<size_t>(length) * 2 + 4);
+  for (uint16_t i = 0; i < length; i++) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) {
+      api_key.push_back('-');
     }
-    api_key.append(hexmap[(data[i] & 0xF0) >> 4]);
-    api_key.append(hexmap[data[i] & 0x0F]);
+    uint8_t byte = data[i];
+    api_key.push_back(HEXMAP[(byte & 0xF0) >> 4]);
+    api_key.push_back(HEXMAP[byte & 0x0F]);
   }
   return api_key;
 }
@@ -461,7 +503,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
 
       // serialNumber
       if (param->read.handle == this->serial_number_char_handle_) {
-        ESP_LOGI(TAG, "Received uuid read event");
+        ESP_LOGI(TAG, "Received serial_number read event");
         this->powerpal_device_id_ = this->uuid_to_device_id_(param->read.value, param->read.value_len);
         ESP_LOGI(TAG, "Powerpal device id: %s", this->powerpal_device_id_.c_str());
 
@@ -470,7 +512,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
 
       // uuid
       if (param->read.handle == this->uuid_char_handle_) {
-        ESP_LOGI(TAG, "Received serial_number read event");
+        ESP_LOGI(TAG, "Received uuid read event");
         this->powerpal_apikey_ = this->serial_to_apikey_(param->read.value, param->read.value_len);
         ESP_LOGI(TAG, "Powerpal apikey: %s", this->powerpal_apikey_.c_str());
 
