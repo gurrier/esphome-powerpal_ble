@@ -39,10 +39,12 @@ void Powerpal::reset_connection_state_() {
   this->stored_measurements_.clear();
   this->last_measurement_timestamp_s_ = 0;
   this->reconnect_pending_ = false;
+  this->client_connected_ = false;
 }
 
 void Powerpal::on_connect() {
   ESP_LOGI(TAG, "[%s] Connected to Powerpal GATT server", this->parent_->address_str().c_str());
+  this->client_connected_ = true;
   this->pending_subscription_ = true;
   this->subscription_in_progress_ = false;
   this->subscription_retry_scheduled_ = false;
@@ -65,7 +67,7 @@ void Powerpal::on_disconnect() {
       this->reconnect_pending_ = false;
       if (this->parent_ == nullptr)
         return;
-      if (this->parent_->is_connected()) {
+      if (this->client_connected_) {
         ESP_LOGD(TAG, "[%s] Reconnect timer fired but client already connected", this->parent_->address_str().c_str());
         return;
       }
@@ -344,9 +346,20 @@ void Powerpal::request_subscription_(const char *trigger_reason) {
 void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                                    esp_ble_gattc_cb_param_t *param) {
   switch (event) {
+    case ESP_GATTC_OPEN_EVT: {
+      if (param->open.status == ESP_GATT_OK) {
+        ESP_LOGD(TAG, "[%s] ESP_GATTC_OPEN_EVT", this->parent_->address_str().c_str());
+        this->on_connect();
+      } else {
+        ESP_LOGW(TAG, "[%s] ESP_GATTC_OPEN_EVT failed, status=%d", this->parent_->address_str().c_str(),
+                 param->open.status);
+        this->reset_connection_state_();
+      }
+      break;
+    }
     case ESP_GATTC_DISCONNECT_EVT: {
       ESP_LOGW(TAG, "[%s] ESP_GATTC_DISCONNECT_EVT", this->parent_->address_str().c_str());
-      this->reset_connection_state_();
+      this->on_disconnect();
       break;
     }
     case ESP_GATTC_SEARCH_CMPL_EVT: {
