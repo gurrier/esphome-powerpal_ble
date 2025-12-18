@@ -43,7 +43,7 @@ void Powerpal::reset_connection_state_() {
 }
 
 void Powerpal::on_connect() {
-  ESP_LOGI(TAG, "[%s] Connected to Powerpal GATT server", this->parent_->address_str().c_str());
+  ESP_LOGI(TAG, "[%s] Connected to Powerpal GATT server", this->parent_->address_str());
   this->client_connected_ = true;
   this->pending_subscription_ = true;
   this->subscription_in_progress_ = false;
@@ -58,7 +58,7 @@ void Powerpal::on_connect() {
 }
 
 void Powerpal::on_disconnect() {
-  ESP_LOGW(TAG, "[%s] Disconnected from Powerpal GATT server", this->parent_->address_str().c_str());
+  ESP_LOGW(TAG, "[%s] Disconnected from Powerpal GATT server", this->parent_->address_str());
   this->reset_connection_state_();
 
   if (!this->reconnect_pending_) {
@@ -68,10 +68,10 @@ void Powerpal::on_disconnect() {
       if (this->parent_ == nullptr)
         return;
       if (this->client_connected_) {
-        ESP_LOGD(TAG, "[%s] Reconnect timer fired but client already connected", this->parent_->address_str().c_str());
+        ESP_LOGD(TAG, "[%s] Reconnect timer fired but client already connected", this->parent_->address_str());
         return;
       }
-      ESP_LOGI(TAG, "[%s] Attempting BLE reconnect", this->parent_->address_str().c_str());
+      ESP_LOGI(TAG, "[%s] Attempting BLE reconnect", this->parent_->address_str());
       this->pending_subscription_ = true;
       this->parent_->connect();
     });
@@ -165,11 +165,11 @@ std::string Powerpal::pkt_to_hex_(const uint8_t *data, uint16_t len) {
 
 
 void Powerpal::decode_(const uint8_t *data, uint16_t length) {
-  ESP_LOGD(TAG, "DEC(%d): 0x%s", length, this->pkt_to_hex_(data, length).c_str());
+  ESP_LOGD(TAG, "DEC(%d): 0x%s", length, this->pkt_to_hex_(data, length));
 }
 
 void Powerpal::parse_battery_(const uint8_t *data, uint16_t length) {
-  ESP_LOGD(TAG, "Battery: DEC(%d): 0x%s", length, this->pkt_to_hex_(data, length).c_str());
+  ESP_LOGD(TAG, "Battery: DEC(%d): 0x%s", length, this->pkt_to_hex_(data, length));
   if (length != 1) {
     ESP_LOGW(TAG, "Unexpected battery payload length %hu", length);
     return;
@@ -349,12 +349,12 @@ void Powerpal::request_subscription_(const char *trigger_reason) {
     return;
 
   if (this->subscription_in_progress_) {
-    ESP_LOGV(TAG, "[%s] Subscription already in progress, ignoring trigger '%s'", this->parent_->address_str().c_str(), trigger_reason);
+    ESP_LOGV(TAG, "[%s] Subscription already in progress, ignoring trigger '%s'", this->parent_->address_str(), trigger_reason);
     return;
   }
 
   if (this->pairing_code_char_handle_ == 0 || this->reading_batch_size_char_handle_ == 0 || this->measurement_char_handle_ == 0) {
-    ESP_LOGD(TAG, "[%s] GATT handles not ready, waiting to subscribe (%s)", this->parent_->address_str().c_str(), trigger_reason);
+    ESP_LOGD(TAG, "[%s] GATT handles not ready, waiting to subscribe (%s)", this->parent_->address_str(), trigger_reason);
     if (!this->subscription_retry_scheduled_) {
       this->subscription_retry_scheduled_ = true;
       this->set_timeout(500, [this]() {
@@ -365,12 +365,12 @@ void Powerpal::request_subscription_(const char *trigger_reason) {
     return;
   }
 
-  ESP_LOGI(TAG, "[%s] Writing pairing code to resume notifications (%s)", this->parent_->address_str().c_str(), trigger_reason);
+  ESP_LOGI(TAG, "[%s] Writing pairing code to resume notifications (%s)", this->parent_->address_str(), trigger_reason);
   auto status = esp_ble_gattc_write_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
                                          this->pairing_code_char_handle_, sizeof(this->pairing_code_),
                                          this->pairing_code_, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
   if (status != ESP_OK) {
-    ESP_LOGW(TAG, "[%s] Failed to submit pairing write (%s), status=%d", this->parent_->address_str().c_str(), trigger_reason, status);
+    ESP_LOGW(TAG, "[%s] Failed to submit pairing write (%s), status=%d", this->parent_->address_str(), trigger_reason, status);
     if (!this->subscription_retry_scheduled_) {
       this->subscription_retry_scheduled_ = true;
       this->set_timeout(2000, [this]() {
@@ -390,17 +390,17 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
   switch (event) {
     case ESP_GATTC_OPEN_EVT: {
       if (param->open.status == ESP_GATT_OK) {
-        ESP_LOGD(TAG, "[%s] ESP_GATTC_OPEN_EVT", this->parent_->address_str().c_str());
+        ESP_LOGD(TAG, "[%s] ESP_GATTC_OPEN_EVT", this->parent_->address_str());
         this->on_connect();
       } else {
-        ESP_LOGW(TAG, "[%s] ESP_GATTC_OPEN_EVT failed, status=%d", this->parent_->address_str().c_str(),
+        ESP_LOGW(TAG, "[%s] ESP_GATTC_OPEN_EVT failed, status=%d", this->parent_->address_str(),
                  param->open.status);
         this->reset_connection_state_();
       }
       break;
     }
     case ESP_GATTC_DISCONNECT_EVT: {
-      ESP_LOGW(TAG, "[%s] ESP_GATTC_DISCONNECT_EVT", this->parent_->address_str().c_str());
+      ESP_LOGW(TAG, "[%s] ESP_GATTC_DISCONNECT_EVT", this->parent_->address_str());
       this->on_disconnect();
       break;
     }
@@ -446,7 +446,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       break;
     }
     case ESP_GATTC_READ_CHAR_EVT: {
-      ESP_LOGD(TAG, "[%s] ESP_GATTC_READ_CHAR_EVT (Received READ)", this->parent_->address_str().c_str());
+      ESP_LOGD(TAG, "[%s] ESP_GATTC_READ_CHAR_EVT (Received READ)", this->parent_->address_str());
       if (param->read.status != ESP_GATT_OK) {
         ESP_LOGW(TAG, "Error reading char at handle %d, status=%d", param->read.handle, param->read.status);
         break;
@@ -471,7 +471,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
                                                             this->measurement_char_handle_);
             if (status) {
               ESP_LOGW(TAG, "[%s] esp_ble_gattc_register_for_notify failed, status=%d",
-                       this->parent_->address_str().c_str(), status);
+                       this->parent_->address_str(), status);
             }
           }
         } else {
@@ -505,7 +505,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       if (param->read.handle == this->serial_number_char_handle_) {
         ESP_LOGI(TAG, "Received serial_number read event");
         this->powerpal_device_id_ = this->uuid_to_device_id_(param->read.value, param->read.value_len);
-        ESP_LOGI(TAG, "Powerpal device id: %s", this->powerpal_device_id_.c_str());
+        ESP_LOGI(TAG, "Powerpal device id: %s", this->powerpal_device_id_);
 
         break;
       }
@@ -514,7 +514,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       if (param->read.handle == this->uuid_char_handle_) {
         ESP_LOGI(TAG, "Received uuid read event");
         this->powerpal_apikey_ = this->serial_to_apikey_(param->read.value, param->read.value_len);
-        ESP_LOGI(TAG, "Powerpal apikey: %s", this->powerpal_apikey_.c_str());
+        ESP_LOGI(TAG, "Powerpal apikey: %s", this->powerpal_apikey_);
 
         break;
       }
@@ -523,7 +523,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
     }
 
     case ESP_GATTC_WRITE_CHAR_EVT: {
-      ESP_LOGD(TAG, "[%s] ESP_GATTC_WRITE_CHAR_EVT (Write confirmed)", this->parent_->address_str().c_str());
+      ESP_LOGD(TAG, "[%s] ESP_GATTC_WRITE_CHAR_EVT (Write confirmed)", this->parent_->address_str());
 
       if (param->write.handle == this->pairing_code_char_handle_) {
         this->subscription_in_progress_ = false;
@@ -580,7 +580,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
               this->parent_->get_gattc_if(), this->parent_->get_remote_bda(), this->battery_char_handle_);
           if (notify_battery_status) {
             ESP_LOGW(TAG, "[%s] esp_ble_gattc_register_for_notify failed, status=%d",
-                     this->parent_->address_str().c_str(), notify_battery_status);
+                     this->parent_->address_str(), notify_battery_status);
           }
         }
 
@@ -614,17 +614,17 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
                                                         this->measurement_char_handle_);
         if (status) {
           ESP_LOGW(TAG, "[%s] esp_ble_gattc_register_for_notify failed, status=%d",
-                   this->parent_->address_str().c_str(), status);
+                   this->parent_->address_str(), status);
         }
         break;
       }
 
       ESP_LOGW(TAG, "[%s] Missed all handle matches: %d",
-               this->parent_->address_str().c_str(), param->write.handle);
+               this->parent_->address_str(), param->write.handle);
       break;
     }  // ESP_GATTC_WRITE_CHAR_EVT
     case ESP_GATTC_NOTIFY_EVT: {
-      ESP_LOGD(TAG, "[%s] Received Notification", this->parent_->address_str().c_str());
+      ESP_LOGD(TAG, "[%s] Received Notification", this->parent_->address_str());
 
       // battery
       if (param->notify.handle == this->battery_char_handle_) {
@@ -651,13 +651,13 @@ void Powerpal::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_pa
     // This event is sent once authentication has completed
     case ESP_GAP_BLE_AUTH_CMPL_EVT: {
       if (param->ble_security.auth_cmpl.success) {
-        ESP_LOGI(TAG, "[%s] Authentication completed", this->parent_->address_str().c_str());
+        ESP_LOGI(TAG, "[%s] Authentication completed", this->parent_->address_str());
         this->pending_subscription_ = true;
         this->subscription_in_progress_ = false;
         this->subscription_retry_scheduled_ = false;
         this->request_subscription_("auth-complete");
       } else {
-        ESP_LOGW(TAG, "[%s] Authentication failed, reason=0x%02x", this->parent_->address_str().c_str(),
+        ESP_LOGW(TAG, "[%s] Authentication failed, reason=0x%02x", this->parent_->address_str(),
                  param->ble_security.auth_cmpl.fail_reason);
         this->pending_subscription_ = false;
         this->subscription_in_progress_ = false;
