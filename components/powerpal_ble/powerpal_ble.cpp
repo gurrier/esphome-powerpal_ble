@@ -130,6 +130,18 @@ void Powerpal::setup() {
   
   ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
   ESP_LOGI(TAG, "Loaded persisted daily_pulses: %llu", this->daily_pulses_);
+  if (this->nvs_ok_) {
+    // Anchor commit threshold and publish restored energy values so Home Assistant statistics
+    // continue from the persisted counters even before the first measurement arrives.
+    this->last_commit_ts_ = millis() / 1000;
+    this->last_pulses_for_threshold_ = this->total_pulses_;
+    if (this->energy_sensor_) {
+      this->energy_sensor_->publish_state(this->total_pulses_ / this->pulses_per_kwh_);
+    }
+    if (this->daily_energy_sensor_) {
+      this->daily_energy_sensor_->publish_state(this->daily_pulses_ / this->pulses_per_kwh_);
+    }
+  }
 
   // ——— set sensor metadata defaults ———
   if (this->energy_sensor_) {
@@ -139,7 +151,7 @@ void Powerpal::setup() {
   }
   if (this->daily_energy_sensor_) {
     this->daily_energy_sensor_->set_device_class("energy");
-    this->daily_energy_sensor_->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
+    this->daily_energy_sensor_->set_state_class(sensor::STATE_CLASS_TOTAL_INCREASING);
     this->daily_energy_sensor_->set_unit_of_measurement("kWh");
   }
 
