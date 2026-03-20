@@ -64,6 +64,8 @@ sensor:
       name: "Powerpal Total Energy"
     battery_level:
       name: "Powerpal Battery"
+    led_sensitivity:
+      name: "Powerpal LED Sensitivity"
     pairing_code: 123123
     notification_interval: 1 # get updates every 1 minute
     pulses_per_kwh: 1000
@@ -180,8 +182,8 @@ pRemoteCharacteristic_readingbatchsize->writeValue(newBatchReadingSize, sizeof(n
 ```
 > :warning: **If reducing the readingBatchSize**:
 >
-> If you have reduced the readingBatchSize, eg from 15m to 1m, at the time of the next update you will receive all the historic pulse updates that have been collected during the previous interval configuration. 
->This may be an issue if you are writing this data to Home Assistant, which currently doesn't support recieving historic datapoints. 
+> If you have reduced the readingBatchSize, eg from 15m to 1m, at the time of the next update you will receive all the historic pulse updates that have been collected during the previous interval configuration.
+>This may be an issue if you are writing this data to Home Assistant, which currently doesn't support recieving historic datapoints.
 Luckily all the updates include a timestamp, so you can likely filter to only accept updates that are within +-5 seconds of the current time.
 
 Subscribe to `measurement` notifications:

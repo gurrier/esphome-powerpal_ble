@@ -86,7 +86,7 @@ void Powerpal::setup() {
   }
   this->pulse_multiplier_ =
       ((seconds_in_minute * this->reading_batch_size_[0]) / (this->pulses_per_kwh_ / kw_to_w_conversion));
-  
+
     // ——— NVS init & load ———
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -125,9 +125,9 @@ void Powerpal::setup() {
     ESP_LOGI(TAG, "After setup, total_pulses_ = %llu", this->total_pulses_);
 
   }
-  
-  
-  
+
+
+
   ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
   ESP_LOGI(TAG, "Loaded persisted daily_pulses: %llu", this->daily_pulses_);
   if (this->nvs_ok_) {
@@ -441,6 +441,22 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
         ESP_LOGI(TAG, "  → serial handle = 0x%02x", ch->handle);
       }
 
+      // Battery characteristic (from standard battery service)
+      if (auto *ch = this->parent_->get_characteristic(POWERPAL_BATTERY_SERVICE_UUID, POWERPAL_BATTERY_CHARACTERISTIC_UUID)) {
+        this->battery_char_handle_ = ch->handle;
+        ESP_LOGI(TAG, "  → battery handle = 0x%02x", ch->handle);
+      } else {
+        ESP_LOGW(TAG, "  ! battery characteristic not found (optional)");
+      }
+
+      // LED sensitivity characteristic
+      if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_LED_SENSITIVITY_UUID)) {
+        this->led_sensitivity_char_handle_ = ch->handle;
+        ESP_LOGI(TAG, "  → led_sensitivity handle = 0x%02x", ch->handle);
+      } else {
+        ESP_LOGW(TAG, "  ! led_sensitivity characteristic not found (optional)");
+      }
+
       this->pending_subscription_ = true;
       this->request_subscription_("service discovery");
       break;
@@ -498,6 +514,13 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       if (param->read.handle == this->led_sensitivity_char_handle_) {
         ESP_LOGD(TAG, "Received led sensitivity read event");
         this->decode_(param->read.value, param->read.value_len);
+        if (param->read.value_len == 1) {
+          uint8_t sensitivity = param->read.value[0];
+          ESP_LOGI(TAG, "LED Sensitivity: %u (range: 1-14, default: 9)", sensitivity);
+          if (this->led_sensitivity_sensor_ != nullptr) {
+            this->led_sensitivity_sensor_->publish_state(sensitivity);
+          }
+        }
         break;
       }
 
@@ -568,7 +591,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
           }
         }
 
-        if (this->battery_ != nullptr) {
+        if (this->battery_ != nullptr && this->battery_char_handle_ != 0) {
           // read battery
           auto read_battery_status = esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
                                                              this->battery_char_handle_, ESP_GATT_AUTH_REQ_NONE);
@@ -584,20 +607,24 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
           }
         }
 
-        // read firmware version
-        auto read_firmware_status =
-            esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                    this->firmware_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-        if (read_firmware_status) {
-          ESP_LOGW(TAG, "Error sending read request for led sensitivity, status=%d", read_firmware_status);
+        // read firmware version (UUID not documented - leaving handle at 0)
+        if (this->firmware_char_handle_ != 0) {
+          auto read_firmware_status =
+              esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                      this->firmware_char_handle_, ESP_GATT_AUTH_REQ_NONE);
+          if (read_firmware_status) {
+            ESP_LOGW(TAG, "Error sending read request for firmware, status=%d", read_firmware_status);
+          }
         }
 
         // read led sensitivity
-        auto read_led_sensitivity_status =
-            esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                    this->led_sensitivity_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-        if (read_led_sensitivity_status) {
-          ESP_LOGW(TAG, "Error sending read request for led sensitivity, status=%d", read_led_sensitivity_status);
+        if (this->led_sensitivity_char_handle_ != 0) {
+          auto read_led_sensitivity_status =
+              esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                      this->led_sensitivity_char_handle_, ESP_GATT_AUTH_REQ_NONE);
+          if (read_led_sensitivity_status) {
+            ESP_LOGW(TAG, "Error sending read request for led sensitivity, status=%d", read_led_sensitivity_status);
+          }
         }
 
         break;

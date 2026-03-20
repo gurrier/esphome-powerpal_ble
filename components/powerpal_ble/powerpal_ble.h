@@ -47,6 +47,8 @@ static const espbt::ESPBTUUID POWERPAL_CHARACTERISTIC_UUID_UUID =
     espbt::ESPBTUUID::from_raw("59DA0009-12F4-25A6-7D4F-55961DCE4205");  // indicate, notify, read, write
 static const espbt::ESPBTUUID POWERPAL_CHARACTERISTIC_SERIAL_UUID =
     espbt::ESPBTUUID::from_raw("59DA0010-12F4-25A6-7D4F-55961DCE4205");  // indicate, notify, read, write
+static const espbt::ESPBTUUID POWERPAL_CHARACTERISTIC_LED_SENSITIVITY_UUID =
+    espbt::ESPBTUUID::from_raw("59DA0008-12F4-25A6-7D4F-55961DCE4205");  // indicate, notify, read, write
 
 static const espbt::ESPBTUUID POWERPAL_BATTERY_SERVICE_UUID = espbt::ESPBTUUID::from_uint16(0x180F);
 static const espbt::ESPBTUUID POWERPAL_BATTERY_CHARACTERISTIC_UUID = espbt::ESPBTUUID::from_uint16(0x2A19);
@@ -73,6 +75,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
   void set_ble_client(ble_client::BLEClient *client) { this->parent_ = client; }
   void set_battery(sensor::Sensor *battery) { battery_ = battery; }
+  void set_led_sensitivity(sensor::Sensor *led_sensitivity) { led_sensitivity_sensor_ = led_sensitivity; }
   void set_power_sensor(sensor::Sensor *power_sensor) { power_sensor_ = power_sensor; }
   void set_energy_sensor(sensor::Sensor *energy_sensor) { energy_sensor_ = energy_sensor; }
   void set_daily_energy_sensor(sensor::Sensor *daily_energy_sensor) { daily_energy_sensor_ = daily_energy_sensor; }
@@ -102,7 +105,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   bool nvs_ok_{false};
 
   uint64_t daily_pulses_{0};
-  uint64_t total_pulses_{0};  
+  uint64_t total_pulses_{0};
 
   // Throttle state for NVS commits
   uint32_t last_commit_ts_{0};              // timestamp of last commit (seconds)
@@ -133,6 +136,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   bool client_connected_{false};
 
   sensor::Sensor *battery_{nullptr};
+  sensor::Sensor *led_sensitivity_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *energy_sensor_{nullptr};
   sensor::Sensor *daily_energy_sensor_{nullptr};
@@ -141,7 +145,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   sensor::Sensor *daily_pulses_sensor_{nullptr};
   sensor::Sensor *watt_hours_sensor_{nullptr};
   sensor::Sensor *timestamp_sensor_{nullptr};
- 
+
 
 #ifdef USE_TIME
   optional<time::RealTimeClock *> time_{};
@@ -153,11 +157,11 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   uint8_t reading_batch_size_[4] = {0x01, 0x00, 0x00, 0x00};
   float pulses_per_kwh_{1.0f};
   float pulse_multiplier_{0.0f};
-  
+
 
   uint8_t stored_measurements_count_{0};
   std::vector<PowerpalMeasurement> stored_measurements_;
-  std::string powerpal_device_id_; 
+  std::string powerpal_device_id_;
   std::string powerpal_apikey_;
   double energy_cost_{0.0};
 
@@ -172,7 +176,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   uint16_t serial_number_char_handle_{0};
 };
 
-}  
-}  
+}
+}
 
 #endif
