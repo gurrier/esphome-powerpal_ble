@@ -143,18 +143,6 @@ void Powerpal::setup() {
     }
   }
 
-  // ——— set sensor metadata defaults ———
-  if (this->energy_sensor_) {
-    this->energy_sensor_->set_device_class("energy");
-    this->energy_sensor_->set_state_class(sensor::STATE_CLASS_TOTAL_INCREASING);
-    this->energy_sensor_->set_unit_of_measurement("kWh");
-  }
-  if (this->daily_energy_sensor_) {
-    this->daily_energy_sensor_->set_device_class("energy");
-    this->daily_energy_sensor_->set_state_class(sensor::STATE_CLASS_TOTAL_INCREASING);
-    this->daily_energy_sensor_->set_unit_of_measurement("kWh");
-  }
-
   this->reset_connection_state_();
 }
 
