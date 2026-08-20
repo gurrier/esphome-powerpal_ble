@@ -25,16 +25,6 @@ namespace powerpal_ble {
 
 namespace espbt = esphome::esp32_ble_tracker;
 
-struct PowerpalMeasurement {
-  uint16_t pulses;
-  time_t timestamp;
-  uint32_t watt_hours;
-  float cost;
-  // bool is_peak;
-};
-
-
-
 static const espbt::ESPBTUUID POWERPAL_SERVICE_UUID =
     espbt::ESPBTUUID::from_raw("59DAABCD-12F4-25A6-7D4F-55961DCE4205");
 static const espbt::ESPBTUUID POWERPAL_CHARACTERISTIC_PAIRING_CODE_UUID =
@@ -50,12 +40,6 @@ static const espbt::ESPBTUUID POWERPAL_CHARACTERISTIC_SERIAL_UUID =
 
 static const espbt::ESPBTUUID POWERPAL_BATTERY_SERVICE_UUID = espbt::ESPBTUUID::from_uint16(0x180F);
 static const espbt::ESPBTUUID POWERPAL_BATTERY_CHARACTERISTIC_UUID = espbt::ESPBTUUID::from_uint16(0x2A19);
-
-
-
-static const uint8_t seconds_in_minute = 60;    // seconds
-static const float kw_to_w_conversion = 1000.0;    // conversion ratio
-
 
 
 class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
@@ -152,12 +136,8 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   uint8_t pairing_code_[4]{0x00, 0x00, 0x00, 0x00};
   uint8_t reading_batch_size_[4] = {0x01, 0x00, 0x00, 0x00};
   float pulses_per_kwh_{1.0f};
-  float pulse_multiplier_{0.0f};
-  
 
-  uint8_t stored_measurements_count_{0};
-  std::vector<PowerpalMeasurement> stored_measurements_;
-  std::string powerpal_device_id_; 
+  std::string powerpal_device_id_;
   std::string powerpal_apikey_;
   double energy_cost_{0.0};
 
@@ -166,8 +146,6 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   uint16_t measurement_char_handle_{0};
 
   uint16_t battery_char_handle_{0};
-  uint16_t led_sensitivity_char_handle_{0};
-  uint16_t firmware_char_handle_{0};
   uint16_t uuid_char_handle_{0};
   uint16_t serial_number_char_handle_{0};
 };

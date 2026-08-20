@@ -30,27 +30,25 @@ void Powerpal::reset_connection_state_() {
   this->reading_batch_size_char_handle_ = 0;
   this->measurement_char_handle_ = 0;
   this->battery_char_handle_ = 0;
-  this->led_sensitivity_char_handle_ = 0;
-  this->firmware_char_handle_ = 0;
   this->uuid_char_handle_ = 0;
   this->serial_number_char_handle_ = 0;
 
-  this->stored_measurements_count_ = 0;
-  this->stored_measurements_.clear();
   this->last_measurement_timestamp_s_ = 0;
   this->reconnect_pending_ = false;
   this->client_connected_ = false;
 }
 
 void Powerpal::on_connect() {
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(TAG, "on_connect() called with null parent_");
+    return;
+  }
   ESP_LOGI(TAG, "[%s] Connected to Powerpal GATT server", this->parent_->address_str());
   this->client_connected_ = true;
   this->pending_subscription_ = true;
   this->subscription_in_progress_ = false;
   this->subscription_retry_scheduled_ = false;
   this->reconnect_pending_ = false;
-  this->stored_measurements_.clear();
-  this->stored_measurements_count_ = 0;
   this->last_measurement_timestamp_s_ = 0;
   this->authenticated_ = false;
 
@@ -58,10 +56,16 @@ void Powerpal::on_connect() {
 }
 
 void Powerpal::on_disconnect() {
+  if (this->parent_ == nullptr) {
+    ESP_LOGW(TAG, "on_disconnect() called with null parent_");
+    return;
+  }
   ESP_LOGW(TAG, "[%s] Disconnected from Powerpal GATT server", this->parent_->address_str());
+
+  bool reconnect_already_pending = this->reconnect_pending_;
   this->reset_connection_state_();
 
-  if (!this->reconnect_pending_) {
+  if (!reconnect_already_pending) {
     this->reconnect_pending_ = true;
     this->set_timeout(10000, [this]() {
       this->reconnect_pending_ = false;
@@ -84,10 +88,7 @@ void Powerpal::setup() {
     ESP_LOGW(TAG, "Invalid pulses_per_kwh configured (%.3f); defaulting to 1.0", this->pulses_per_kwh_);
     this->pulses_per_kwh_ = 1.0f;
   }
-  this->pulse_multiplier_ =
-      ((seconds_in_minute * this->reading_batch_size_[0]) / (this->pulses_per_kwh_ / kw_to_w_conversion));
-  
-    // ——— NVS init & load ———
+  // ——— NVS init & load ———
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
     ESP_ERROR_CHECK(nvs_flash_erase());
@@ -128,7 +129,6 @@ void Powerpal::setup() {
   
   
   
-  ESP_LOGI(TAG, "pulse_multiplier_: %f", this->pulse_multiplier_);
   ESP_LOGI(TAG, "Loaded persisted daily_pulses: %llu", this->daily_pulses_);
   if (this->nvs_ok_) {
     // Anchor commit threshold and publish restored energy values so Home Assistant statistics
@@ -304,6 +304,9 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
     }
   }
 
+  // ESPHome's Sensor::publish_state() only accepts float, whose 24-bit mantissa exactly
+  // represents integers up to 2^24 (~16.7M). daily_pulses_ resets at midnight so this is
+  // not reachable in practice; total_pulses_ is always published pre-divided into kWh.
   if (this->daily_pulses_sensor_)
     this->daily_pulses_sensor_->publish_state(this->daily_pulses_);
 }
@@ -348,6 +351,11 @@ void Powerpal::request_subscription_(const char *trigger_reason) {
   if (!this->pending_subscription_)
     return;
 
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(TAG, "request_subscription_() called with null parent_ (%s)", trigger_reason);
+    return;
+  }
+
   if (this->subscription_in_progress_) {
     ESP_LOGV(TAG, "[%s] Subscription already in progress, ignoring trigger '%s'", this->parent_->address_str(), trigger_reason);
     return;
@@ -387,6 +395,10 @@ void Powerpal::request_subscription_(const char *trigger_reason) {
 
 void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                                    esp_ble_gattc_cb_param_t *param) {
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(TAG, "gattc_event_handler() called with null parent_ (event=%d)", event);
+    return;
+  }
   switch (event) {
     case ESP_GATTC_OPEN_EVT: {
       if (param->open.status == ESP_GATT_OK) {
@@ -441,6 +453,14 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
         ESP_LOGI(TAG, "  → serial handle = 0x%02x", ch->handle);
       }
 
+      // Battery (standard BLE Battery Service, separate from the Powerpal service)
+      if (auto *ch = this->parent_->get_characteristic(POWERPAL_BATTERY_SERVICE_UUID, POWERPAL_BATTERY_CHARACTERISTIC_UUID)) {
+        this->battery_char_handle_ = ch->handle;
+        ESP_LOGI(TAG, "  → battery handle = 0x%02x", ch->handle);
+      } else if (this->battery_ != nullptr) {
+        ESP_LOGE(TAG, "  ! battery characteristic not found");
+      }
+
       this->pending_subscription_ = true;
       this->request_subscription_("service discovery");
       break;
@@ -484,20 +504,6 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       if (param->read.handle == this->battery_char_handle_) {
         ESP_LOGD(TAG, "Received battery read event");
         this->parse_battery_(param->read.value, param->read.value_len);
-        break;
-      }
-
-      // firmware
-      if (param->read.handle == this->firmware_char_handle_) {
-        ESP_LOGD(TAG, "Received firmware read event");
-        this->decode_(param->read.value, param->read.value_len);
-        break;
-      }
-
-      // led sensitivity
-      if (param->read.handle == this->led_sensitivity_char_handle_) {
-        ESP_LOGD(TAG, "Received led sensitivity read event");
-        this->decode_(param->read.value, param->read.value_len);
         break;
       }
 
@@ -568,7 +574,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
           }
         }
 
-        if (this->battery_ != nullptr) {
+        if (this->battery_ != nullptr && this->battery_char_handle_ != 0) {
           // read battery
           auto read_battery_status = esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
                                                              this->battery_char_handle_, ESP_GATT_AUTH_REQ_NONE);
@@ -582,22 +588,6 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
             ESP_LOGW(TAG, "[%s] esp_ble_gattc_register_for_notify failed, status=%d",
                      this->parent_->address_str(), notify_battery_status);
           }
-        }
-
-        // read firmware version
-        auto read_firmware_status =
-            esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                    this->firmware_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-        if (read_firmware_status) {
-          ESP_LOGW(TAG, "Error sending read request for led sensitivity, status=%d", read_firmware_status);
-        }
-
-        // read led sensitivity
-        auto read_led_sensitivity_status =
-            esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                    this->led_sensitivity_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-        if (read_led_sensitivity_status) {
-          ESP_LOGW(TAG, "Error sending read request for led sensitivity, status=%d", read_led_sensitivity_status);
         }
 
         break;
@@ -647,6 +637,10 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
 }
 
 void Powerpal::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(TAG, "gap_event_handler() called with null parent_ (event=%d)", event);
+    return;
+  }
   switch (event) {
     // This event is sent once authentication has completed
     case ESP_GAP_BLE_AUTH_CMPL_EVT: {

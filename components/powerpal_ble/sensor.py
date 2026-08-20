@@ -17,7 +17,6 @@ from esphome.const import (
     UNIT_WATT,
     UNIT_PERCENT,
     CONF_TIME_ID,
-    CONF_TEXT_SENSORS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -101,8 +100,9 @@ CONFIG_SCHEMA = cv.All(
                 unit_of_measurement=UNIT_KILOWATT_HOURS,
                 accuracy_decimals=3,
                 device_class=DEVICE_CLASS_ENERGY,
-                state_class=STATE_CLASS_TOTAL_INCREASING,
-
+                # Resets to 0 at midnight, so it is not a monotonically increasing total
+                # (STATE_CLASS_TOTAL_INCREASING would confuse the HA Energy Dashboard).
+                state_class=STATE_CLASS_MEASUREMENT,
             ),
             cv.Optional(CONF_ENERGY): sensor.sensor_schema(
                 unit_of_measurement=UNIT_KILOWATT_HOURS,
