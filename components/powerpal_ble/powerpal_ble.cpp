@@ -291,8 +291,8 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
     bool time_ok = (now_s - this->last_commit_ts_) >= COMMIT_INTERVAL_S;
     bool thresh_ok = (this->total_pulses_ - this->last_pulses_for_threshold_) >= PULSE_THRESHOLD;
     if (time_ok || thresh_ok) {
-      ESP_LOGD(TAG, "NVS THROTTLED commit #%u at %us: total=%llu daily=%llu",
-               ++this->nvsc_commit_count_, now_s,
+      ESP_LOGD(TAG, "NVS THROTTLED commit #%lu at %lus: total=%llu daily=%llu",
+               static_cast<unsigned long>(++this->nvsc_commit_count_), static_cast<unsigned long>(now_s),
                this->total_pulses_, this->daily_pulses_);
       nvs_set_u64(this->nvs_handle_, "total", this->total_pulses_);
       nvs_set_u64(this->nvs_handle_, "daily", this->daily_pulses_);
