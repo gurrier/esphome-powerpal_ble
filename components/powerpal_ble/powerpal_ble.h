@@ -145,6 +145,11 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   std::string powerpal_apikey_;
   double energy_cost_{0.0};
 
+  // Set once the device has confirmed reading_batch_size_ matches its own persisted
+  // setting. Not reset on reconnect: the setting lives on the Powerpal's own flash, so a
+  // BLE drop doesn't change it, and re-reading it on every reconnect is a wasted round trip.
+  bool reading_batch_size_confirmed_{false};
+
   uint16_t pairing_code_char_handle_{0};
   uint16_t reading_batch_size_char_handle_{0};
   uint16_t measurement_char_handle_{0};

@@ -18,7 +18,12 @@ void Powerpal::dump_config() {
   LOG_SENSOR(" ", "Power", this->power_sensor_);
   LOG_SENSOR(" ", "Daily Energy", this->daily_energy_sensor_);
   LOG_SENSOR(" ", "Total Energy", this->energy_sensor_);
-  }
+  LOG_SENSOR(" ", "Pulses", this->pulses_sensor_);
+  LOG_SENSOR(" ", "Daily Pulses", this->daily_pulses_sensor_);
+  LOG_SENSOR(" ", "Watt Hours", this->watt_hours_sensor_);
+  LOG_SENSOR(" ", "Timestamp", this->timestamp_sensor_);
+  LOG_SENSOR(" ", "Cost", this->cost_sensor_);
+}
 
 void Powerpal::reset_connection_state_() {
   this->authenticated_ = false;
@@ -481,6 +486,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
             }
           } else {
             // reading batch size is set correctly so subscribe to measurement notifications
+            this->reading_batch_size_confirmed_ = true;
             auto status = esp_ble_gattc_register_for_notify(this->parent_->get_gattc_if(), this->parent_->get_remote_bda(),
                                                             this->measurement_char_handle_);
             if (status) {
@@ -550,11 +556,23 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
         this->pending_subscription_ = false;
         this->subscription_retry_scheduled_ = false;
 
-        auto read_reading_batch_size_status =
-            esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
-                                    this->reading_batch_size_char_handle_, ESP_GATT_AUTH_REQ_NONE);
-        if (read_reading_batch_size_status) {
-          ESP_LOGW(TAG, "Error sending read request for reading batch size, status=%d", read_reading_batch_size_status);
+        if (!this->reading_batch_size_confirmed_) {
+          auto read_reading_batch_size_status =
+              esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                      this->reading_batch_size_char_handle_, ESP_GATT_AUTH_REQ_NONE);
+          if (read_reading_batch_size_status) {
+            ESP_LOGW(TAG, "Error sending read request for reading batch size, status=%d", read_reading_batch_size_status);
+          }
+        } else {
+          // Already confirmed correct on a previous connection; the setting lives on the
+          // Powerpal's own flash and doesn't change across a BLE reconnect, so skip the
+          // read/verify round trip and resume measurement notifications directly.
+          auto status = esp_ble_gattc_register_for_notify(this->parent_->get_gattc_if(), this->parent_->get_remote_bda(),
+                                                          this->measurement_char_handle_);
+          if (status) {
+            ESP_LOGW(TAG, "[%s] esp_ble_gattc_register_for_notify failed, status=%d",
+                     this->parent_->address_str(), status);
+          }
         }
 
         if (!this->powerpal_apikey_.length()) {
@@ -600,6 +618,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
 
       if (param->write.handle == this->reading_batch_size_char_handle_) {
         // reading batch size is now set correctly so subscribe to measurement notifications
+        this->reading_batch_size_confirmed_ = true;
         auto status = esp_ble_gattc_register_for_notify(this->parent_->get_gattc_if(), this->parent_->get_remote_bda(),
                                                         this->measurement_char_handle_);
         if (status) {
