@@ -34,8 +34,6 @@ void Powerpal::reset_connection_state_() {
   this->serial_number_char_handle_ = 0;
 
   this->last_measurement_timestamp_s_ = 0;
-  this->reconnect_pending_ = false;
-  this->client_connected_ = false;
 }
 
 void Powerpal::on_connect() {
@@ -44,11 +42,9 @@ void Powerpal::on_connect() {
     return;
   }
   ESP_LOGI(TAG, "[%s] Connected to Powerpal GATT server", this->parent_->address_str());
-  this->client_connected_ = true;
   this->pending_subscription_ = true;
   this->subscription_in_progress_ = false;
   this->subscription_retry_scheduled_ = false;
-  this->reconnect_pending_ = false;
   this->last_measurement_timestamp_s_ = 0;
   this->authenticated_ = false;
 
@@ -61,25 +57,9 @@ void Powerpal::on_disconnect() {
     return;
   }
   ESP_LOGW(TAG, "[%s] Disconnected from Powerpal GATT server", this->parent_->address_str());
-
-  bool reconnect_already_pending = this->reconnect_pending_;
+  // ble_client already auto-reconnects (Auto-Connect: TRUE) when configured with a fixed
+  // mac_address, so no manual reconnect timer is scheduled here to avoid racing it.
   this->reset_connection_state_();
-
-  if (!reconnect_already_pending) {
-    this->reconnect_pending_ = true;
-    this->set_timeout(10000, [this]() {
-      this->reconnect_pending_ = false;
-      if (this->parent_ == nullptr)
-        return;
-      if (this->client_connected_) {
-        ESP_LOGD(TAG, "[%s] Reconnect timer fired but client already connected", this->parent_->address_str());
-        return;
-      }
-      ESP_LOGI(TAG, "[%s] Attempting BLE reconnect", this->parent_->address_str());
-      this->pending_subscription_ = true;
-      this->parent_->connect();
-    });
-  }
 }
 
 void Powerpal::setup() {
