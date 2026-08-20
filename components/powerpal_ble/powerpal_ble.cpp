@@ -34,7 +34,10 @@ void Powerpal::reset_connection_state_() {
   this->uuid_char_handle_ = 0;
   this->serial_number_char_handle_ = 0;
 
-  this->last_measurement_timestamp_s_ = 0;
+  // last_measurement_timestamp_s_ is intentionally NOT reset here: the Powerpal keeps
+  // counting pulses on its own hardware regardless of our BLE connection state, so
+  // preserving it lets the first measurement after a reconnect compute a real elapsed
+  // interval from the device's own timestamps instead of being skipped or guessed.
 }
 
 void Powerpal::on_connect() {
@@ -46,7 +49,6 @@ void Powerpal::on_connect() {
   this->pending_subscription_ = true;
   this->subscription_in_progress_ = false;
   this->subscription_retry_scheduled_ = false;
-  this->last_measurement_timestamp_s_ = 0;
   this->authenticated_ = false;
 
   this->set_timeout(1000, [this]() { this->request_subscription_("post-connect"); });
@@ -225,11 +227,17 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   // 4) Read pulse count for this interval
   uint16_t pulses = uint16_t(data[4]) | (uint16_t(data[5]) << 8);
 
-  // 5) Instantaneous power (W) using actual elapsed time
+  // 5) Instantaneous power (W) using actual elapsed time. last_measurement_timestamp_s_
+  // survives BLE reconnects (see reset_connection_state_()), so a brief drop still yields
+  // a correctly-computed averaged power figure; only skip when the gap is long enough
+  // that an average over it would no longer represent anything like "current" power.
   uint32_t interval_s = this->last_measurement_timestamp_s_ ? (t32 - this->last_measurement_timestamp_s_) : 0;
   this->last_measurement_timestamp_s_ = t32;
   if (interval_s == 0) {
-    ESP_LOGD(TAG, "Skipping power calc on first measurement after reboot or rollover");
+    ESP_LOGD(TAG, "Skipping power calc on first measurement since boot");
+  } else if (interval_s > MAX_PLAUSIBLE_POWER_INTERVAL_S) {
+    ESP_LOGD(TAG, "Skipping power calc: %lus gap since last measurement is too long for a meaningful average",
+             static_cast<unsigned long>(interval_s));
   } else {
     float energy_kwh = float(pulses) / float(this->pulses_per_kwh_);
     float power_w = (energy_kwh * 3600.0f * 1000.0f) / float(interval_s);

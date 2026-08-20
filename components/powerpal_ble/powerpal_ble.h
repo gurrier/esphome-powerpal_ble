@@ -96,6 +96,11 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   static constexpr uint32_t COMMIT_INTERVAL_S = 60;  // min seconds between commits
   static constexpr uint64_t PULSE_THRESHOLD   = 100; // min pulses between commits
 
+  // Beyond this many seconds since the last measurement, treat the gap as a real outage
+  // rather than a brief BLE drop: averaging pulses over it would no longer represent
+  // anything like "current" power, so the power calc is skipped for that one sample.
+  static constexpr uint32_t MAX_PLAUSIBLE_POWER_INTERVAL_S = 300;
+
 
   std::string pkt_to_hex_(const uint8_t *data, uint16_t len);
   void decode_(const uint8_t *data, uint16_t length);
