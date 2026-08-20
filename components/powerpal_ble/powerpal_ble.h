@@ -113,6 +113,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   bool pending_subscription_{false};
   bool subscription_in_progress_{false};
   bool subscription_retry_scheduled_{false};
+  bool waiting_for_ble_auth_{false};
 
   sensor::Sensor *battery_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
