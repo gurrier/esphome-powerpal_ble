@@ -8,20 +8,12 @@ Collection of code, tools and documentation for data retrieval over BLE from you
 ![Powerpal Device](assets/powerpal_device_cropped.png)
 
 - [Using the ESPHome Component](#using-the-esphome-component)
-- [Using the Arduino sketch](#using-the-arduino-sketch)
 - [BLE Documentation](#ble-documentation)
 - [Powerpal API Key and Device ID](#powerpal-api-key-and-device-id)
 
 ## Using the ESPHome Component
 
 The ESPHome component hasn't been merged into esphome yet, but you can use it via `external_components`
-> :grey_exclamation: This component now supports experimental Powerpal cloud uploading!
->
-> This functionality allows you to view your energy data visualisations within the Powerpal application without ever have to bother connecting your Powerpal device to your phone ever again.
->
-> This feature works by retrieving the Powerpal authentication information (stored on the Powerpa device itself), and collects 15 measurements before uploading them to your Powerpal Cloud.
->
-> This requires your energy cost per kWh in the configuration, and currently doesn't support peak/off-peak switching.
 
 #### Requirements:
 - An ESP32
@@ -30,24 +22,19 @@ The ESPHome component hasn't been merged into esphome yet, but you can use it vi
   - BLE MAC address (can be found on device sticker, by ESPHome BLEtracker, or by using an app like nRF Connect once you have disabled the bluetooth of all your smart devices)
   - Connection pairing pin (6 digits you input when setting up your device, also can be found printed in Powerpal info pack, or inside the Powerpal application)
   - Your Smart meter pulse rate (eg. 1000 pulses = 1kW/h)
-- Optionally uncomment the `http_request_id` and add your `cost_per_kwh` to enable Powerpal cloud uploading.
 
 ```yaml
 external_components:
-  - source: github://WeekendWarrior1/esphome@powerpal_ble
-    # requires ble_client because I had to add some small features to authenticate properly
-    components: [ ble_client, powerpal_ble ]
-
-# optional requirement to enable powerpal cloud uploading
-#http_request:
-#  id: powerpal_cloud_uploader
+  - source:
+      type: git
+      url: https://github.com/gurrier/esphome-powerpal_ble.git
+      ref: "main" # or a specific version tag
+    components: [ powerpal_ble ]
 
 # optional requirement used with daily energy sensor
 time:
   - platform: homeassistant
     id: homeassistant_time
-
-esp32_ble_tracker:
 
 ble_client:
   - mac_address: DF:5C:55:00:00:00
@@ -68,47 +55,20 @@ sensor:
     notification_interval: 1 # get updates every 1 minute
     pulses_per_kwh: 1000
     time_id: homeassistant_time # daily energy still works without a time_id, but recommended to include one to properly handle daylight savings, etc.
-#    http_request_id: powerpal_cloud_uploader
-#    cost_per_kwh: 0.20 #dollars per kWh
+#    cost_per_kwh: 0.20 #dollars per kWh, flat-rate only
 #    powerpal_device_id: 0000abcd #optional, component will retrieve from your Powerpal if not set
 #    powerpal_apikey: 4a89e298-b17b-43e7-a0c1-fcd1412e98ef #optional, component will retrieve from your Powerpal if not set
 ```
-You can also find a full config here: [powerpal_ble.yaml](powerpal_ble.yaml)
+You can also find a full config here: [powerpalproesp.yaml](powerpalproesp.yaml)
 
-And the component code here: [powerpal_ble ESPHome Component](https://github.com/WeekendWarrior1/esphome/tree/powerpal_ble/esphome/components/powerpal_ble)
-
-## Using the Arduino sketch
-This sketch simply prints the timestamp, pulses and energy usage of the updates sent by the Powerpal (the update interval can also be configured).
-
-It's mainly useful to demonstrate that the Powerpal is connectable over BLE by a third party device, without the need for the proprietary Powerpal Pro wifi gateway (which I believe also uses an ESP32).
-
-#### Requirements:
-- An ESP32
-- A configured Powerpal
-- Powerpal device information:
-  - BLE MAC address (can be found on device sticker, by running sketch, or by using an app like nRF Connect once you have disabled the bluetooth of all your smart devices)
-  - Connection pairing pin (6 digits you input when setting up your device, also can be found printed in Powerpal info pack, or inside the Powerpal application)
-  - Your Smart meter pulse rate (eg. 1000 pulses = 1kW/h)
-
-
-#### Fill in your details at top of esp32_ble_print_data.ino and upload:
-```c++
-static char *BLE_address("df:5c:55:00:00:00"); // lowercase only or else will fail to match
-// if your pairing pin starts with 0, eg "024024", set the powerpal_pass_key as 24024
-static uint32_t powerpal_pass_key = 123123;
-static float pulses_per_kw = 1000;
-static uint8_t read_every = 1; // minutes (only tested between 1 - 15 minutes)
-```
-
-#### Serial Monitor output:
-![Serial Monitor Example Output](assets/arduino_serial_monitor_output.png)
+And the component code here: [powerpal_ble ESPHome Component](components/powerpal_ble)
 
 ## Powerpal API Key and Device ID
 The Powerpal Cloud API Key is stored on the Powerpal device itself at `59DA0009-12F4-25A6-7D4F-55961DCE4205`.
 The Device ID is stored at `59DA0010-12F4-25A6-7D4F-55961DCE4205`.
 It can be retrieved and decoded using:
 - [Python Authentication Retrieval Script](auth_extraction)
-- Or both the [ESPHome Component](#using-the-esphome-component) and the [Arduino Sketch](#using-the-arduino-sketch) will print it out after establishing a BLE connection to the Powerpal
+- Or the [ESPHome Component](#using-the-esphome-component) will print it out after establishing a BLE connection to the Powerpal
 
 Also see [how to decode both values](#retrieving-and-decoding-cloud-api-key-and-device-id)
 
