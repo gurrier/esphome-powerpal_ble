@@ -23,6 +23,7 @@ void Powerpal::dump_config() {
   LOG_SENSOR(" ", "Watt Hours", this->watt_hours_sensor_);
   LOG_SENSOR(" ", "Timestamp", this->timestamp_sensor_);
   LOG_SENSOR(" ", "Cost", this->cost_sensor_);
+  LOG_SENSOR(" ", "LED Sensitivity", this->led_sensitivity_sensor_);
 }
 
 void Powerpal::reset_connection_state_() {
@@ -38,6 +39,7 @@ void Powerpal::reset_connection_state_() {
   this->battery_char_handle_ = 0;
   this->uuid_char_handle_ = 0;
   this->serial_number_char_handle_ = 0;
+  this->led_sensitivity_char_handle_ = 0;
 
   // last_measurement_timestamp_s_ is intentionally NOT reset here: the Powerpal keeps
   // counting pulses on its own hardware regardless of our BLE connection state, so
@@ -452,6 +454,14 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
         ESP_LOGI(TAG, "  → serial handle = 0x%02x", ch->handle);
       }
 
+      // LED sensitivity
+      if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_LED_SENSITIVITY_UUID)) {
+        this->led_sensitivity_char_handle_ = ch->handle;
+        ESP_LOGI(TAG, "  → led_sensitivity handle = 0x%02x", ch->handle);
+      } else if (this->led_sensitivity_sensor_ != nullptr) {
+        ESP_LOGE(TAG, "  ! led_sensitivity characteristic not found");
+      }
+
       // Battery (standard BLE Battery Service, separate from the Powerpal service)
       if (auto *ch = this->parent_->get_characteristic(POWERPAL_BATTERY_SERVICE_UUID, POWERPAL_BATTERY_CHARACTERISTIC_UUID)) {
         this->battery_char_handle_ = ch->handle;
@@ -504,6 +514,21 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       if (param->read.handle == this->battery_char_handle_) {
         ESP_LOGD(TAG, "Received battery read event");
         this->parse_battery_(param->read.value, param->read.value_len);
+        break;
+      }
+
+      // led sensitivity
+      if (param->read.handle == this->led_sensitivity_char_handle_) {
+        ESP_LOGD(TAG, "Received led sensitivity read event");
+        this->decode_(param->read.value, param->read.value_len);
+        if (param->read.value_len == 1) {
+          uint8_t sensitivity = param->read.value[0];
+          ESP_LOGI(TAG, "LED Sensitivity: %u (range: 1-14, default: 9)", sensitivity);
+          if (this->led_sensitivity_sensor_ != nullptr)
+            this->led_sensitivity_sensor_->publish_state(sensitivity);
+        } else {
+          ESP_LOGW(TAG, "Unexpected led sensitivity payload length %hu", param->read.value_len);
+        }
         break;
       }
 
@@ -605,6 +630,15 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
           if (notify_battery_status) {
             ESP_LOGW(TAG, "[%s] esp_ble_gattc_register_for_notify failed, status=%d",
                      this->parent_->address_str(), notify_battery_status);
+          }
+        }
+
+        if (this->led_sensitivity_sensor_ != nullptr && this->led_sensitivity_char_handle_ != 0) {
+          // read led sensitivity
+          auto read_led_sensitivity_status = esp_ble_gattc_read_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                                                     this->led_sensitivity_char_handle_, ESP_GATT_AUTH_REQ_NONE);
+          if (read_led_sensitivity_status) {
+            ESP_LOGW(TAG, "Error sending read request for led sensitivity, status=%d", read_led_sensitivity_status);
           }
         }
 

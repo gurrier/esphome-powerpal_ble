@@ -39,6 +39,7 @@ CONF_TIME_STAMP = "timestamp"
 CONF_PULSES = "pulses"
 CONF_COST = "cost"
 CONF_DAILY_PULSES = "daily_pulses"
+CONF_LED_SENSITIVITY = "led_sensitivity"
 
 def _validate(config):
     if CONF_DAILY_ENERGY in config and CONF_TIME_ID not in config:
@@ -126,6 +127,12 @@ CONFIG_SCHEMA = cv.All(
                 accuracy_decimals=0,
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
+            cv.Optional(CONF_LED_SENSITIVITY): sensor.sensor_schema(
+                accuracy_decimals=0,
+                state_class=STATE_CLASS_MEASUREMENT,
+                icon="mdi:led-on",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
             cv.Optional(CONF_COST_PER_KWH): cv.float_range(min=0),
             cv.Optional(
                 CONF_POWERPAL_DEVICE_ID
@@ -192,6 +199,9 @@ async def to_code(config):
         sens = await sensor.new_sensor(config[CONF_BATTERY_LEVEL])
         cg.add(var.set_battery(sens))
 
+    if CONF_LED_SENSITIVITY in config:
+        sens = await sensor.new_sensor(config[CONF_LED_SENSITIVITY])
+        cg.add(var.set_led_sensitivity(sens))
 
     if CONF_COST_PER_KWH in config:
         cg.add(var.set_energy_cost(config[CONF_COST_PER_KWH]))

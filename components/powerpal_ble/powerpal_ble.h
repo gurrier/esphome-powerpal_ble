@@ -37,6 +37,8 @@ static const espbt::ESPBTUUID POWERPAL_CHARACTERISTIC_UUID_UUID =
     espbt::ESPBTUUID::from_raw("59DA0009-12F4-25A6-7D4F-55961DCE4205");  // indicate, notify, read, write
 static const espbt::ESPBTUUID POWERPAL_CHARACTERISTIC_SERIAL_UUID =
     espbt::ESPBTUUID::from_raw("59DA0010-12F4-25A6-7D4F-55961DCE4205");  // indicate, notify, read, write
+static const espbt::ESPBTUUID POWERPAL_CHARACTERISTIC_LED_SENSITIVITY_UUID =
+    espbt::ESPBTUUID::from_raw("59DA0008-12F4-25A6-7D4F-55961DCE4205");  // indicate, notify, read, write
 
 static const espbt::ESPBTUUID POWERPAL_BATTERY_SERVICE_UUID = espbt::ESPBTUUID::from_uint16(0x180F);
 static const espbt::ESPBTUUID POWERPAL_BATTERY_CHARACTERISTIC_UUID = espbt::ESPBTUUID::from_uint16(0x2A19);
@@ -57,6 +59,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
   void set_ble_client(ble_client::BLEClient *client) { this->parent_ = client; }
   void set_battery(sensor::Sensor *battery) { battery_ = battery; }
+  void set_led_sensitivity(sensor::Sensor *led_sensitivity_sensor) { led_sensitivity_sensor_ = led_sensitivity_sensor; }
   void set_power_sensor(sensor::Sensor *power_sensor) { power_sensor_ = power_sensor; }
   void set_energy_sensor(sensor::Sensor *energy_sensor) { energy_sensor_ = energy_sensor; }
   void set_daily_energy_sensor(sensor::Sensor *daily_energy_sensor) { daily_energy_sensor_ = daily_energy_sensor; }
@@ -121,6 +124,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   bool waiting_for_ble_auth_{false};
 
   sensor::Sensor *battery_{nullptr};
+  sensor::Sensor *led_sensitivity_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *energy_sensor_{nullptr};
   sensor::Sensor *daily_energy_sensor_{nullptr};
@@ -157,6 +161,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   uint16_t battery_char_handle_{0};
   uint16_t uuid_char_handle_{0};
   uint16_t serial_number_char_handle_{0};
+  uint16_t led_sensitivity_char_handle_{0};
 };
 
 }  
