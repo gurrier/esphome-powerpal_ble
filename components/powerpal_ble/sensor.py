@@ -140,8 +140,6 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(
                 CONF_POWERPAL_APIKEY
             ): powerpal_apikey,  # apikey (optional) # if not configured, will grab from device
-            # upload interval (optional)
-            # action to enable or disable peak
         }
     )
     .extend(ble_client.BLE_CLIENT_SCHEMA)
