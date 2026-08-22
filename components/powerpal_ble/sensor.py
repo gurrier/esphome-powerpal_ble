@@ -103,7 +103,9 @@ CONFIG_SCHEMA = cv.All(
                 device_class=DEVICE_CLASS_ENERGY,
                 # Resets to 0 at midnight, so it is not a monotonically increasing total
                 # (STATE_CLASS_TOTAL_INCREASING would confuse the HA Energy Dashboard).
-                state_class=STATE_CLASS_MEASUREMENT,
+                # No state_class at all: HA's own validation only allows None, "total",
+                # or "total_increasing" for device_class=energy - "measurement" (what we
+                # used to set here) is rejected outright.
             ),
             cv.Optional(CONF_ENERGY): sensor.sensor_schema(
                 unit_of_measurement=UNIT_KILOWATT_HOURS,
