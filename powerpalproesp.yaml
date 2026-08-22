@@ -35,6 +35,8 @@ sensor:
       name: "Powerpal Power"
     battery_level:
       name: "Powerpal Battery"
+    led_sensitivity:
+      name: "Powerpal LED Sensitivity"
     daily_energy:
       name: "Powerpal Daily Energy"
     daily_pulses:
