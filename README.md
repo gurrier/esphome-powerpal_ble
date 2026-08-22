@@ -81,7 +81,7 @@ text_sensor:
 
 button:
   - platform: template
-    name: "Retrieve Powerpal API Key/Device ID"
+    name: "Retrieve Powerpal API Key and Device ID"
     on_press:
       then:
         - lambda: |-
