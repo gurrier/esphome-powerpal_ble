@@ -662,7 +662,10 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
         break;
       }
 
-      ESP_LOGW(TAG, "[%s] Missed all handle matches: %d",
+      // Not necessarily an error: any other automation sharing this ble_client (e.g. a
+      // manual ble_client.ble_write to an unrelated characteristic) will also show up
+      // here, since every GATT event on the connection is dispatched to every node.
+      ESP_LOGV(TAG, "[%s] Write confirmed for a handle this component doesn't track: %d",
                this->parent_->address_str(), param->write.handle);
       break;
     }  // ESP_GATTC_WRITE_CHAR_EVT
