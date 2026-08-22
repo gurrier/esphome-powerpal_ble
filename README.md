@@ -66,7 +66,7 @@ And the component code here: [powerpal_ble ESPHome Component](components/powerpa
 
 ## Useful Extras
 
-Two small YAML additions people have found handy:
+A few small YAML additions people have found handy:
 
 **Retrieve your API key / device ID without digging through logs** — the component already reads these from your Powerpal on connect; a button + lambda lets you surface them as text sensors instead of hunting through log output:
 
@@ -89,7 +89,7 @@ button:
             id(powerpal_device_id).publish_state(id(powerpal_ble_sensor).get_device_id());
 ```
 
-**Manually force an RTC resync** — the Powerpal's onboard clock is generally reliable and this shouldn't normally be needed, but if you ever want to force it, this uses ESPHome's built-in `ble_client.ble_write` action directly against the Powerpal's `time` characteristic — no component code involved at all:
+**Manually force an RTC resync** — the Powerpal's onboard clock is generally reliable, but it does drift or reset for some people (e.g. after a battery replacement — see reports on [Whirlpool](https://forums.whirlpool.net.au/archive/3m01ljx6) and [ProductReview](https://www.productreview.com.au/listings/powerpal-energy-monitor/q-and-a)). This uses ESPHome's built-in `ble_client.ble_write` action directly against the Powerpal's `time` characteristic — no component code involved at all:
 
 ```yaml
 button:
@@ -106,6 +106,69 @@ button:
               (uint8_t)(t      ), (uint8_t)(t >> 8),
               (uint8_t)(t >> 16), (uint8_t)(t >> 24)
             };
+```
+
+**Automatically keep the RTC in sync** — rather than remembering to press a button, this script waits for both Home Assistant's time and the BLE connection to be ready, syncs the clock, and retries every 2 minutes if either isn't ready yet. Wire it to run once on boot and periodically thereafter:
+
+```yaml
+esphome:
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: sync_powerpal_time
+
+script:
+  - id: sync_powerpal_time
+    mode: restart
+    then:
+      # Wait for Home Assistant time (max 30s)
+      - wait_until:
+          condition:
+            lambda: 'return id(homeassistant_time).now().is_valid();'
+          timeout: 30s
+
+      # Wait for BLE connection (max 30s)
+      - wait_until:
+          condition:
+            lambda: 'return id(powerpal).connected();'
+          timeout: 30s
+
+      # Only sync if both are ready
+      - if:
+          condition:
+            lambda: |-
+              return id(homeassistant_time).now().is_valid() &&
+                     id(powerpal).connected();
+          then:
+            - logger.log: "Syncing Powerpal RTC time"
+            - ble_client.ble_write:
+                id: powerpal
+                service_uuid: '59DAABCD-12F4-25A6-7D4F-55961DCE4205'
+                characteristic_uuid: '59DA0004-12F4-25A6-7D4F-55961DCE4205'
+                value: !lambda |-
+                  uint32_t t = id(homeassistant_time).now().timestamp;
+                  return std::vector<uint8_t>{
+                    (uint8_t)(t), (uint8_t)(t >> 8),
+                    (uint8_t)(t >> 16), (uint8_t)(t >> 24)
+                  };
+          else:
+            - logger.log: "Skipping RTC sync (timeout or not connected)"
+            - delay: 2min
+            - script.execute: sync_powerpal_time
+
+interval:
+  - interval: 6h
+    then:
+      - script.execute: sync_powerpal_time
+```
+
+Credit to [SleepinDevil's fork](https://github.com/SleepinDevil/esphome-powerpal_ble) for this pattern.
+
+**Improve BLE reliability against WiFi power-saving** — the ESP32 shares its WiFi and Bluetooth radio, and WiFi's default power-saving behavior is a known source of BLE timing issues. If you're seeing frequent disconnects, try disabling it:
+
+```yaml
+wifi:
+  power_save_mode: none
 ```
 
 ## Powerpal API Key and Device ID
