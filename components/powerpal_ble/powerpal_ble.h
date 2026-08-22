@@ -82,6 +82,10 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void set_device_id(std::string powerpal_device_id) { powerpal_device_id_ = powerpal_device_id; }
   void set_apikey(std::string powerpal_apikey) { powerpal_apikey_ = powerpal_apikey; }
   void set_energy_cost(double energy_cost) { energy_cost_ = energy_cost; }
+  // Lets a lambda (e.g. a button press) surface these into a text_sensor, without
+  // having to dig them out of the logs.
+  std::string get_apikey() { return powerpal_apikey_; }
+  std::string get_device_id() { return powerpal_device_id_; }
 
  protected:
   // Persisted daily pulses:

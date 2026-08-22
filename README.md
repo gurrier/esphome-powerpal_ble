@@ -8,6 +8,7 @@ Collection of code, tools and documentation for data retrieval over BLE from you
 ![Powerpal Device](assets/powerpal_device_cropped.png)
 
 - [Using the ESPHome Component](#using-the-esphome-component)
+- [Useful Extras](#useful-extras)
 - [BLE Documentation](#ble-documentation)
 - [Powerpal API Key and Device ID](#powerpal-api-key-and-device-id)
 
@@ -62,6 +63,50 @@ sensor:
 You can also find a full config here: [powerpalproesp.yaml](powerpalproesp.yaml)
 
 And the component code here: [powerpal_ble ESPHome Component](components/powerpal_ble)
+
+## Useful Extras
+
+Two small YAML additions people have found handy:
+
+**Retrieve your API key / device ID without digging through logs** — the component already reads these from your Powerpal on connect; a button + lambda lets you surface them as text sensors instead of hunting through log output:
+
+```yaml
+text_sensor:
+  - platform: template
+    name: "Powerpal API Key"
+    id: powerpal_api_key
+  - platform: template
+    name: "Powerpal Device ID"
+    id: powerpal_device_id
+
+button:
+  - platform: template
+    name: "Retrieve Powerpal API Key/Device ID"
+    on_press:
+      then:
+        - lambda: |-
+            id(powerpal_api_key).publish_state(id(powerpal_ble_sensor).get_apikey());
+            id(powerpal_device_id).publish_state(id(powerpal_ble_sensor).get_device_id());
+```
+
+**Manually force an RTC resync** — the Powerpal's onboard clock is generally reliable and this shouldn't normally be needed, but if you ever want to force it, this uses ESPHome's built-in `ble_client.ble_write` action directly against the Powerpal's `time` characteristic — no component code involved at all:
+
+```yaml
+button:
+  - platform: template
+    name: "Powerpal: Set Device Time (now)"
+    on_press:
+      - ble_client.ble_write:
+          id: powerpal
+          service_uuid: '59DAABCD-12F4-25A6-7D4F-55961DCE4205'
+          characteristic_uuid: '59DA0004-12F4-25A6-7D4F-55961DCE4205'   # time
+          value: !lambda |-
+            uint32_t t = id(homeassistant_time).now().timestamp;
+            return std::vector<uint8_t>{
+              (uint8_t)(t      ), (uint8_t)(t >> 8),
+              (uint8_t)(t >> 16), (uint8_t)(t >> 24)
+            };
+```
 
 ## Powerpal API Key and Device ID
 The Powerpal Cloud API Key is stored on the Powerpal device itself at `59DA0009-12F4-25A6-7D4F-55961DCE4205`.
