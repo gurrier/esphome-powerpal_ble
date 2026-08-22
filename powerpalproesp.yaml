@@ -1,6 +1,10 @@
 esphome:
   name: powerpal-gateway
   friendly_name: Powerpal Gateway
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: sync_powerpal_time
 
 esp32:
   board: esp32dev
@@ -26,6 +30,65 @@ button:
   - platform: restart
     name: "Restart"
     icon: "mdi:restart"
+  - platform: template
+    name: "Retrieve Powerpal API Key and Device ID"
+    on_press:
+      then:
+        - lambda: |-
+            id(powerpal_api_key).publish_state(id(powerpal_ble_sensor).get_apikey());
+            id(powerpal_device_id).publish_state(id(powerpal_ble_sensor).get_device_id());
+
+text_sensor:
+  - platform: template
+    name: "Powerpal API Key"
+    id: powerpal_api_key
+  - platform: template
+    name: "Powerpal Device ID"
+    id: powerpal_device_id
+
+script:
+  - id: sync_powerpal_time
+    mode: restart
+    then:
+      # Wait for Home Assistant time (max 30s)
+      - wait_until:
+          condition:
+            lambda: 'return id(homeassistant_time).now().is_valid();'
+          timeout: 30s
+
+      # Wait for BLE connection (max 30s)
+      - wait_until:
+          condition:
+            lambda: 'return id(powerpal).connected();'
+          timeout: 30s
+
+      # Only sync if both are ready
+      - if:
+          condition:
+            lambda: |-
+              return id(homeassistant_time).now().is_valid() &&
+                     id(powerpal).connected();
+          then:
+            - logger.log: "Syncing Powerpal RTC time"
+            - ble_client.ble_write:
+                id: powerpal
+                service_uuid: '59DAABCD-12F4-25A6-7D4F-55961DCE4205'
+                characteristic_uuid: '59DA0004-12F4-25A6-7D4F-55961DCE4205'
+                value: !lambda |-
+                  uint32_t t = id(homeassistant_time).now().timestamp;
+                  return std::vector<uint8_t>{
+                    (uint8_t)(t), (uint8_t)(t >> 8),
+                    (uint8_t)(t >> 16), (uint8_t)(t >> 24)
+                  };
+          else:
+            - logger.log: "Skipping RTC sync (timeout or not connected)"
+            - delay: 2min
+            - script.execute: sync_powerpal_time
+
+interval:
+  - interval: 6h
+    then:
+      - script.execute: sync_powerpal_time
 
 sensor:
   - platform: powerpal_ble
@@ -72,6 +135,7 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  power_save_mode: none # avoid WiFi power-saving interfering with BLE timing/reliability
   ap:
     ssid: "Powerpal Fallback Hotspot"
     password: "XXXXXXXX" # << EDIT HERE
