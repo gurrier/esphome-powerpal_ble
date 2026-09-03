@@ -3,6 +3,8 @@ _This repository is not affiliated with Powerpal.  This code builds on previous 
 # powerpal_ble
 Collection of code, tools and documentation for data retrieval over BLE from your Powerpal.
 
+☕ If this integration's useful to you, [buy me a coffee](https://ko-fi.com/gurrier).
+
 [*Home Assistant Community Discussion*](https://community.home-assistant.io/t/powerpal-smart-energy-monitor/263713/126)
 
 ![Powerpal Device](assets/powerpal_device_cropped.png)
