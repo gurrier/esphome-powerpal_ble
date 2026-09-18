@@ -108,6 +108,20 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   // anything like "current" power, so the power calc is skipped for that one sample.
   static constexpr uint32_t MAX_PLAUSIBLE_POWER_INTERVAL_S = 300;
 
+  // Ring buffer of recently-processed (timestamp, pulses) pairs. The Powerpal
+  // occasionally re-delivers a measurement it already sent us — observed in the
+  // field as an exact repeat of both fields, roughly 1-2x/week — most likely a
+  // buffered record it doesn't know reached us before a brief BLE drop. Since
+  // total/daily pulses are a total_increasing counter, counting the same interval
+  // twice would silently and permanently inflate it, so recent deliveries are
+  // remembered long enough to catch a resend.
+  static constexpr uint8_t RECENT_MEASUREMENTS_SIZE = 8;
+  uint32_t recent_measurement_timestamps_[RECENT_MEASUREMENTS_SIZE]{};
+  uint16_t recent_measurement_pulses_[RECENT_MEASUREMENTS_SIZE]{};
+  uint8_t recent_measurement_next_{0};
+
+  bool is_duplicate_measurement_(uint32_t timestamp, uint16_t pulses);
+  void remember_measurement_(uint32_t timestamp, uint16_t pulses);
 
   std::string pkt_to_hex_(const uint8_t *data, uint16_t len);
   void decode_(const uint8_t *data, uint16_t length);

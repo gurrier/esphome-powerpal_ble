@@ -173,6 +173,20 @@ void Powerpal::parse_battery_(const uint8_t *data, uint16_t length) {
   this->battery_->publish_state(data[0]);
 }
 
+bool Powerpal::is_duplicate_measurement_(uint32_t timestamp, uint16_t pulses) {
+  for (uint8_t i = 0; i < RECENT_MEASUREMENTS_SIZE; i++) {
+    if (this->recent_measurement_timestamps_[i] == timestamp && this->recent_measurement_pulses_[i] == pulses)
+      return true;
+  }
+  return false;
+}
+
+void Powerpal::remember_measurement_(uint32_t timestamp, uint16_t pulses) {
+  this->recent_measurement_timestamps_[this->recent_measurement_next_] = timestamp;
+  this->recent_measurement_pulses_[this->recent_measurement_next_] = pulses;
+  this->recent_measurement_next_ = (this->recent_measurement_next_ + 1) % RECENT_MEASUREMENTS_SIZE;
+}
+
 void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   if (length < 6) {
     ESP_LOGW(TAG, "parse_measurement_: packet too short (%hu)", length);
@@ -233,6 +247,15 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
 
   // 4) Read pulse count for this interval
   uint16_t pulses = uint16_t(data[4]) | (uint16_t(data[5]) << 8);
+
+  // The Powerpal occasionally re-delivers a measurement it already sent (see
+  // is_duplicate_measurement_'s declaration for why). Drop it before touching any
+  // state so it isn't double-counted into the total/daily pulse counters.
+  if (this->is_duplicate_measurement_(t32, pulses)) {
+    ESP_LOGD(TAG, "Ignoring duplicate measurement: timestamp=%u pulses=%u", static_cast<unsigned>(t32), pulses);
+    return;
+  }
+  this->remember_measurement_(t32, pulses);
 
   // 5) Instantaneous power (W) using actual elapsed time. last_measurement_timestamp_s_
   // survives BLE reconnects (see reset_connection_state_()), so a brief drop still yields
