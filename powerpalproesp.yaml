@@ -129,8 +129,8 @@ api:
     key: !secret esphome_api_encryption_key
 
 ota:
-  platform: esphome
-  password: "XXXXXXXXXXXXXXXXXXXXX" # << EDIT HERE
+  - platform: esphome
+    encryption: # reuses the api encryption key above; no password needed
 
 wifi:
   ssid: !secret wifi_ssid

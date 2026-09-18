@@ -166,6 +166,20 @@ interval:
 
 Credit to [SleepinDevil's fork](https://github.com/SleepinDevil/esphome-powerpal_ble) for this pattern.
 
+**Use encryption instead of a password for API/OTA** — ESPHome has deprecated plaintext password auth in favor of encryption keys (the password option is removed entirely as of ESPHome 2026.1.0). One API encryption key can protect both API and OTA traffic — OTA just reuses it:
+
+```yaml
+api:
+  encryption:
+    key: !secret esphome_api_encryption_key
+
+ota:
+  - platform: esphome
+    encryption: # reuses the api encryption key above; no password needed
+```
+
+Unlike a password, encryption also keeps the firmware image itself confidential in transit, not just gate-kept.
+
 **Improve BLE reliability against WiFi power-saving** — the ESP32 shares its WiFi and Bluetooth radio, and WiFi's default power-saving behavior is a known source of BLE timing issues. If you're seeing frequent disconnects, try disabling it:
 
 ```yaml
