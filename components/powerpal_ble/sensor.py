@@ -1,7 +1,11 @@
+import json
 import logging
+import subprocess
+from pathlib import Path
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import sensor, ble_client, time
+from esphome.components import sensor, ble_client, text_sensor, time
 from esphome.const import (
     CONF_ID,
     CONF_BATTERY_LEVEL,
@@ -23,6 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CODEOWNERS = ["@gurrier"]
 DEPENDENCIES = ["ble_client"]
+AUTO_LOAD = ["text_sensor"]
 
 powerpal_ble_ns = cg.esphome_ns.namespace("powerpal_ble")
 Powerpal = powerpal_ble_ns.class_("Powerpal", ble_client.BLEClientNode, cg.Component)
@@ -40,6 +45,35 @@ CONF_PULSES = "pulses"
 CONF_COST = "cost"
 CONF_DAILY_PULSES = "daily_pulses"
 CONF_LED_SENSITIVITY = "led_sensitivity"
+CONF_VERSION = "version"
+
+
+def _component_version():
+    """Version of this component: manifest.json, plus the git commit when known."""
+    base = Path(__file__).resolve().parent
+    try:
+        version = json.loads((base / "manifest.json").read_text())["version"]
+    except (OSError, ValueError, KeyError):
+        version = "unknown"
+
+    # Only trust git if this folder is inside its own checkout. Otherwise (e.g. a
+    # copy dropped into a config directory that is itself a git repo) it would
+    # report an unrelated repository's commit.
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(base), *args],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+
+    try:
+        if Path(git("rev-parse", "--show-toplevel")).resolve() == base.parent.parent:
+            sha = git("rev-parse", "--short", "HEAD")
+            if sha:
+                version = f"{version} ({sha})"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return version
+
 
 def _validate(config):
     if CONF_DAILY_ENERGY in config and CONF_TIME_ID not in config:
@@ -136,6 +170,10 @@ CONFIG_SCHEMA = cv.All(
                 icon="mdi:led-on",
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
+            cv.Optional(CONF_VERSION): text_sensor.text_sensor_schema(
+                icon="mdi:tag-outline",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
             cv.Optional(CONF_COST_PER_KWH): cv.float_range(min=0),
             cv.Optional(
                 CONF_POWERPAL_DEVICE_ID
@@ -203,6 +241,11 @@ async def to_code(config):
     if CONF_LED_SENSITIVITY in config:
         sens = await sensor.new_sensor(config[CONF_LED_SENSITIVITY])
         cg.add(var.set_led_sensitivity(sens))
+
+    cg.add(var.set_version(_component_version()))
+    if CONF_VERSION in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_VERSION])
+        cg.add(var.set_version_sensor(sens))
 
     if CONF_COST_PER_KWH in config:
         cg.add(var.set_energy_cost(config[CONF_COST_PER_KWH]))

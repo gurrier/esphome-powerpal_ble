@@ -4,6 +4,7 @@
 #include "esphome/components/ble_client/ble_client.h"
 #include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/helpers.h"
 
@@ -82,6 +83,8 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void set_device_id(std::string powerpal_device_id) { powerpal_device_id_ = powerpal_device_id; }
   void set_apikey(std::string powerpal_apikey) { powerpal_apikey_ = powerpal_apikey; }
   void set_energy_cost(double energy_cost) { energy_cost_ = energy_cost; }
+  void set_version(const std::string &version) { version_ = version; }
+  void set_version_sensor(text_sensor::TextSensor *version_sensor) { version_sensor_ = version_sensor; }
   // Lets a lambda (e.g. a button press) surface these into a text_sensor, without
   // having to dig them out of the logs.
   std::string get_apikey() { return powerpal_apikey_; }
@@ -151,7 +154,10 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   sensor::Sensor *daily_pulses_sensor_{nullptr};
   sensor::Sensor *watt_hours_sensor_{nullptr};
   sensor::Sensor *timestamp_sensor_{nullptr};
- 
+
+  std::string version_;
+  text_sensor::TextSensor *version_sensor_{nullptr};
+
 
 #ifdef USE_TIME
   optional<time::RealTimeClock *> time_{};

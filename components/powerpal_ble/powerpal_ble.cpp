@@ -24,6 +24,8 @@ void Powerpal::dump_config() {
   LOG_SENSOR(" ", "Timestamp", this->timestamp_sensor_);
   LOG_SENSOR(" ", "Cost", this->cost_sensor_);
   LOG_SENSOR(" ", "LED Sensitivity", this->led_sensitivity_sensor_);
+  LOG_TEXT_SENSOR(" ", "Version", this->version_sensor_);
+  ESP_LOGCONFIG(TAG, "  Component version: %s", this->version_.c_str());
 }
 
 void Powerpal::reset_connection_state_() {
@@ -74,6 +76,9 @@ void Powerpal::on_disconnect() {
 
 void Powerpal::setup() {
   this->authenticated_ = false;
+  ESP_LOGI(TAG, "Powerpal BLE component version %s", this->version_.c_str());
+  if (this->version_sensor_ != nullptr)
+    this->version_sensor_->publish_state(this->version_);
   if (this->pulses_per_kwh_ <= 0.0f) {
     ESP_LOGW(TAG, "Invalid pulses_per_kwh configured (%.3f); defaulting to 1.0", this->pulses_per_kwh_);
     this->pulses_per_kwh_ = 1.0f;

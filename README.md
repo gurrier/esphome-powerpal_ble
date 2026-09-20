@@ -182,6 +182,16 @@ ota:
 
 Unlike a password, encryption also keeps the firmware image itself confidential in transit, not just gate-kept.
 
+**See which version of the component is installed** — add a `version` text sensor and it appears as a diagnostic entity on the device page in Home Assistant. The component also prints its version in the boot log. Builds taken from a branch such as `main` include the git commit, e.g. `1.6.3 (647e50b)`, so unreleased builds are distinguishable:
+
+```yaml
+sensor:
+  - platform: powerpal_ble
+    # ...
+    version:
+      name: "Powerpal BLE Version"
+```
+
 **Improve BLE reliability against WiFi power-saving** — the ESP32 shares its WiFi and Bluetooth radio, and WiFi's default power-saving behavior is a known source of BLE timing issues. If you're seeing frequent disconnects, try disabling it:
 
 ```yaml

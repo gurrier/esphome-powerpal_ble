@@ -103,6 +103,8 @@ sensor:
       name: "Powerpal Battery"
     led_sensitivity:
       name: "Powerpal LED Sensitivity"
+    version:
+      name: "Powerpal BLE Version"
     daily_energy:
       name: "Powerpal Daily Energy"
     daily_pulses:
