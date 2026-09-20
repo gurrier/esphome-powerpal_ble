@@ -50,6 +50,7 @@ text_sensor:
     id: powerpal_device_id
   - platform: version
     name: "ESPHome Version"
+    hide_hash: true
 
 script:
   - id: sync_powerpal_time
