@@ -192,6 +192,14 @@ sensor:
       name: "Powerpal BLE Version"
 ```
 
+To also see which ESPHome version (and build time) produced the firmware, add ESPHome's built-in `version` text sensor. It needs nothing from this component. If you already have a `text_sensor:` section, add it to that list:
+
+```yaml
+text_sensor:
+  - platform: version
+    name: "ESPHome Version"
+```
+
 **Improve BLE reliability against WiFi power-saving** — the ESP32 shares its WiFi and Bluetooth radio, and WiFi's default power-saving behavior is a known source of BLE timing issues. If you're seeing frequent disconnects, try disabling it:
 
 ```yaml

@@ -48,6 +48,8 @@ text_sensor:
   - platform: template
     name: "Powerpal Device ID"
     id: powerpal_device_id
+  - platform: version
+    name: "ESPHome Version"
 
 script:
   - id: sync_powerpal_time
