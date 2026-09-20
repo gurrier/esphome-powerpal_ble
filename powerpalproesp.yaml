@@ -15,7 +15,10 @@ external_components:
   - source:
       type: git
       url: https://github.com/gurrier/esphome-powerpal_ble.git
-      ref: "main"   # or a specific version tag, e.g. "1.6.1", to pin to a stable release
+      ref: "main"   # or a specific version tag, e.g. "1.6.3", to pin to a stable release
+      # "main" tracks the latest commit and will surface an "Update available" badge in
+      # the ESPHome Dashboard whenever it changes, but that code isn't necessarily
+      # validated against real hardware yet. Pinning to a tag is the recommended default.
     components: [ powerpal_ble ]
 
 time:

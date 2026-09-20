@@ -31,7 +31,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/gurrier/esphome-powerpal_ble.git
-      ref: "main" # or a specific version tag
+      ref: "main" # or a specific version tag, e.g. "1.6.3", to pin to a stable release
     components: [ powerpal_ble ]
 
 # optional requirement used with daily energy sensor
@@ -62,6 +62,8 @@ sensor:
 #    powerpal_device_id: 0000abcd #optional, component will retrieve from your Powerpal if not set
 #    powerpal_apikey: 4a89e298-b17b-43e7-a0c1-fcd1412e98ef #optional, component will retrieve from your Powerpal if not set
 ```
+> **`main` vs. a version tag:** `ref: "main"` tracks the latest commit, which means the ESPHome Dashboard will flag an "Update available" in Home Assistant whenever new code lands — but that code hasn't necessarily been validated against real hardware yet. Pinning to a version tag (e.g. `"1.6.3"`) is the recommended default: your build only changes when you deliberately bump the tag after reading the release notes. Track `main` only if you specifically want to follow development closely and accept the occasional rough edge.
+
 You can also find a full config here: [powerpalproesp.yaml](powerpalproesp.yaml)
 
 And the component code here: [powerpal_ble ESPHome Component](components/powerpal_ble)
