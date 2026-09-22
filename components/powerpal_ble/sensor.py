@@ -11,6 +11,7 @@ from esphome.const import (
     CONF_BATTERY_LEVEL,
     DEVICE_CLASS_BATTERY,
     DEVICE_CLASS_POWER,
+    DEVICE_CLASS_TIMESTAMP,
     ENTITY_CATEGORY_DIAGNOSTIC,
     DEVICE_CLASS_ENERGY,
     CONF_ENERGY,
@@ -151,7 +152,14 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_WATT_HOURS): sensor.sensor_schema(),
             cv.Optional(CONF_PULSES): sensor.sensor_schema(),
             cv.Optional(CONF_DAILY_PULSES): sensor.sensor_schema(),
-            cv.Optional(CONF_TIME_STAMP): sensor.sensor_schema(),
+            # A plain numeric sensor can't hold this exactly: ESPHome's Sensor::publish_state()
+            # takes a float, whose 24-bit mantissa only represents integers exactly up to ~16.7M
+            # -- a unix timestamp (~1.79 billion) rounds to the nearest multiple of 128, silently
+            # merging any two readings less than ~64s apart. A text sensor with an ISO 8601 string
+            # has no such limit, and HA renders device_class: timestamp as a real datetime.
+            cv.Optional(CONF_TIME_STAMP): text_sensor.text_sensor_schema(
+                device_class=DEVICE_CLASS_TIMESTAMP,
+            ),
             cv.Optional(CONF_COST): sensor.sensor_schema(
                 accuracy_decimals=11
             ),
@@ -218,7 +226,7 @@ async def to_code(config):
         cg.add(var.set_watt_hours(sens))
 
     if CONF_TIME_STAMP in config:
-        sens = await sensor.new_sensor(config[CONF_TIME_STAMP])
+        sens = await text_sensor.new_text_sensor(config[CONF_TIME_STAMP])
         cg.add(var.set_timestamp(sens))
 
     if CONF_COST in config:

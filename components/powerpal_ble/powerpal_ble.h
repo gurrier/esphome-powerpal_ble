@@ -67,7 +67,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void set_cost_sensor(sensor::Sensor *cost_sensor) { cost_sensor_ = cost_sensor;}
   void set_pulses_sensor(sensor::Sensor *pulses_sensor) { pulses_sensor_ = pulses_sensor;}
   void set_watt_hours(sensor::Sensor *watt_hours_sensor) {watt_hours_sensor_ = watt_hours_sensor;}
-  void set_timestamp(sensor::Sensor *timestamp_sensor) { timestamp_sensor_ = timestamp_sensor;}
+  void set_timestamp(text_sensor::TextSensor *timestamp_sensor) { timestamp_sensor_ = timestamp_sensor;}
   void set_daily_pulses_sensor(sensor::Sensor *daily_pulses_sensor) { daily_pulses_sensor_ = daily_pulses_sensor;}
 #ifdef USE_TIME
   void set_time(time::RealTimeClock *time) { time_ = time; }
@@ -153,7 +153,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   sensor::Sensor *pulses_sensor_{nullptr};
   sensor::Sensor *daily_pulses_sensor_{nullptr};
   sensor::Sensor *watt_hours_sensor_{nullptr};
-  sensor::Sensor *timestamp_sensor_{nullptr};
+  text_sensor::TextSensor *timestamp_sensor_{nullptr};
 
   std::string version_;
   text_sensor::TextSensor *version_sensor_{nullptr};

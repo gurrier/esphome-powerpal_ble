@@ -21,7 +21,7 @@ void Powerpal::dump_config() {
   LOG_SENSOR(" ", "Pulses", this->pulses_sensor_);
   LOG_SENSOR(" ", "Daily Pulses", this->daily_pulses_sensor_);
   LOG_SENSOR(" ", "Watt Hours", this->watt_hours_sensor_);
-  LOG_SENSOR(" ", "Timestamp", this->timestamp_sensor_);
+  LOG_TEXT_SENSOR(" ", "Timestamp", this->timestamp_sensor_);
   LOG_SENSOR(" ", "Cost", this->cost_sensor_);
   LOG_SENSOR(" ", "LED Sensitivity", this->led_sensitivity_sensor_);
   LOG_TEXT_SENSOR(" ", "Version", this->version_sensor_);
@@ -253,12 +253,23 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   // 4) Read pulse count for this interval
   uint16_t pulses = uint16_t(data[4]) | (uint16_t(data[5]) << 8);
 
-  // The Powerpal occasionally re-delivers a measurement it already sent (see
-  // is_duplicate_measurement_'s declaration for why). Drop it before touching any
-  // state so it isn't double-counted into the total/daily pulse counters.
+  // TEMPORARY EXPERIMENT (revert by setting this back to true): the timestamp sensor
+  // used to silently round two readings less than ~64s apart onto the same value (fixed
+  // below), which made every "duplicate" seen in exported history ambiguous -- it could
+  // have been a real re-delivered measurement, or two distinct readings that collided on
+  // publish. With that rounding gone, a genuine repeat in the timestamp sensor's history
+  // now can only mean a real duplicate slipped past this exact check. So for now, detect
+  // and log a match but don't suppress it, and watch the (now-precise) timestamp sensor for
+  // any actual repeat over the next day or so. If none appear, the Powerpal doesn't really
+  // re-deliver measurements on this timescale, and the earlier "duplicates" were all
+  // rounding artifacts. If repeats do appear, this proves a real duplicate and the counter
+  // below should be re-enabled to suppress it again.
+  static constexpr bool SUPPRESS_DUPLICATES = false;
   if (this->is_duplicate_measurement_(t32, pulses)) {
-    ESP_LOGD(TAG, "Ignoring duplicate measurement: timestamp=%u pulses=%u", static_cast<unsigned>(t32), pulses);
-    return;
+    ESP_LOGW(TAG, "Duplicate measurement detected (timestamp=%u pulses=%u); %s",
+             static_cast<unsigned>(t32), pulses, SUPPRESS_DUPLICATES ? "dropping it" : "publishing anyway (experiment)");
+    if (SUPPRESS_DUPLICATES)
+      return;
   }
   this->remember_measurement_(t32, pulses);
 
@@ -295,9 +306,18 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   if (this->watt_hours_sensor_)
     this->watt_hours_sensor_->publish_state((int)roundf(wh));
 
-  // 9) Timestamp
-  if (this->timestamp_sensor_)
-    this->timestamp_sensor_->publish_state((long)unix_time);
+  // 9) Timestamp, as an exact ISO 8601 UTC string -- see the schema comment in sensor.py
+  // for why this can't be a plain numeric sensor.
+  if (this->timestamp_sensor_ != nullptr) {
+    struct tm *tm_utc = ::gmtime(&unix_time);
+    if (tm_utc != nullptr) {
+      char iso[25];
+      strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", tm_utc);
+      this->timestamp_sensor_->publish_state(iso);
+    } else {
+      ESP_LOGW(TAG, "gmtime failed for timestamp %u", static_cast<unsigned>(t32));
+    }
+  }
 
   // 10 & 11) Accumulate and throttled NVS commit for Total & Daily Energy
   this->total_pulses_ += pulses;
