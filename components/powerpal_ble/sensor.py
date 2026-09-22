@@ -161,7 +161,9 @@ CONFIG_SCHEMA = cv.All(
                 device_class=DEVICE_CLASS_TIMESTAMP,
             ),
             cv.Optional(CONF_COST): sensor.sensor_schema(
-                accuracy_decimals=11
+                # A float has ~7 significant decimal digits total, regardless of magnitude,
+                # so anything past single-digit decimals here would just be display noise.
+                accuracy_decimals=6
             ),
             cv.Required(CONF_PAIRING_CODE): cv.int_range(min=1, max=999999),
             cv.Required(CONF_NOTIFICATION_INTERVAL): cv.int_range(min=1, max=60),
