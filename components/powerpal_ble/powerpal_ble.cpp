@@ -253,23 +253,17 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   // 4) Read pulse count for this interval
   uint16_t pulses = uint16_t(data[4]) | (uint16_t(data[5]) << 8);
 
-  // TEMPORARY EXPERIMENT (revert by setting this back to true): the timestamp sensor
-  // used to silently round two readings less than ~64s apart onto the same value (fixed
-  // below), which made every "duplicate" seen in exported history ambiguous -- it could
-  // have been a real re-delivered measurement, or two distinct readings that collided on
-  // publish. With that rounding gone, a genuine repeat in the timestamp sensor's history
-  // now can only mean a real duplicate slipped past this exact check. So for now, detect
-  // and log a match but don't suppress it, and watch the (now-precise) timestamp sensor for
-  // any actual repeat over the next day or so. If none appear, the Powerpal doesn't really
-  // re-deliver measurements on this timescale, and the earlier "duplicates" were all
-  // rounding artifacts. If repeats do appear, this proves a real duplicate and the counter
-  // below should be re-enabled to suppress it again.
-  static constexpr bool SUPPRESS_DUPLICATES = false;
+  // Field-tested with suppression disabled (once the timestamp sensor's rounding bug --
+  // which made every apparent "duplicate" ambiguous -- was fixed): a clean overnight run
+  // produced zero real repeats, so the Powerpal does not appear to re-deliver measurements
+  // on this timescale in practice. This check is kept as cheap insurance regardless -- it
+  // costs 8 words of RAM and a comparison per packet -- and it's still the correct defence
+  // against the one confirmed re-delivery trigger: changing notification_interval causes
+  // the device to dump its buffered backlog, and a redelivered record within that burst
+  // would otherwise be double-counted.
   if (this->is_duplicate_measurement_(t32, pulses)) {
-    ESP_LOGW(TAG, "Duplicate measurement detected (timestamp=%u pulses=%u); %s",
-             static_cast<unsigned>(t32), pulses, SUPPRESS_DUPLICATES ? "dropping it" : "publishing anyway (experiment)");
-    if (SUPPRESS_DUPLICATES)
-      return;
+    ESP_LOGD(TAG, "Ignoring duplicate measurement: timestamp=%u pulses=%u", static_cast<unsigned>(t32), pulses);
+    return;
   }
   this->remember_measurement_(t32, pulses);
 
