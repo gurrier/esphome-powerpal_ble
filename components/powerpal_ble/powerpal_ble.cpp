@@ -1,9 +1,11 @@
 #include "powerpal_ble.h"
+#include "esphome/core/application.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 
 #include <nvs_flash.h>
 #include <nvs.h>
+#include <esp_system.h>
 
 #ifdef USE_ESP32
 namespace esphome {
@@ -26,6 +28,12 @@ void Powerpal::dump_config() {
   LOG_SENSOR(" ", "LED Sensitivity", this->led_sensitivity_sensor_);
   LOG_TEXT_SENSOR(" ", "Version", this->version_sensor_);
   ESP_LOGCONFIG(TAG, "  Component version: %s", this->version_.c_str());
+  LOG_SENSOR(" ", "Watchdog Restart Count", this->watchdog_restart_count_sensor_);
+  LOG_TEXT_SENSOR(" ", "Watchdog Last Reason", this->watchdog_last_reason_sensor_);
+  if (this->stale_restart_after_s_ > 0) {
+    ESP_LOGCONFIG(TAG, "  Stale-measurement watchdog: restart after %us without a reading",
+                  static_cast<unsigned>(this->stale_restart_after_s_));
+  }
 }
 
 void Powerpal::reset_connection_state_() {
@@ -139,8 +147,112 @@ void Powerpal::setup() {
   }
 
   this->reset_connection_state_();
+
+  this->report_watchdog_diagnostics_if_pending_();
+  if (this->stale_restart_after_s_ > 0) {
+    this->set_interval(30000, [this]() { this->check_stale_watchdog_(); });
+  }
 }
 
+void Powerpal::check_stale_watchdog_() {
+  // Not armed until the first measurement of this boot arrives, so a slow initial pairing
+  // (or a genuinely long first connection) can never be mistaken for a stall.
+  if (this->stale_restart_after_s_ == 0 || !this->have_measurement_since_boot_)
+    return;
+
+  uint32_t elapsed_s = (millis() - this->last_measurement_millis_) / 1000;
+  if (elapsed_s < this->stale_restart_after_s_)
+    return;
+
+  ESP_LOGE(TAG, "No measurement received in %us (limit %us); restarting to recover",
+           static_cast<unsigned>(elapsed_s), static_cast<unsigned>(this->stale_restart_after_s_));
+  this->persist_watchdog_diagnostics_(elapsed_s);
+  App.safe_reboot();
+}
+
+void Powerpal::persist_watchdog_diagnostics_(uint32_t stale_for_s) {
+  if (!this->nvs_ok_)
+    return;
+
+  uint32_t count = 0;
+  nvs_get_u32(this->nvs_handle_, "wd_count", &count);
+  ++count;
+
+  uint8_t flags = 0;
+  if (this->parent_ != nullptr && this->parent_->connected())
+    flags |= 0x01;
+  if (this->authenticated_)
+    flags |= 0x02;
+  if (this->pending_subscription_)
+    flags |= 0x04;
+  if (this->subscription_in_progress_)
+    flags |= 0x08;
+  if (this->subscription_retry_scheduled_)
+    flags |= 0x10;
+  if (this->waiting_for_ble_auth_)
+    flags |= 0x20;
+  if (this->measurement_char_handle_ != 0)
+    flags |= 0x40;  // service discovery had completed
+
+  nvs_set_u32(this->nvs_handle_, "wd_count", count);
+  nvs_set_u32(this->nvs_handle_, "wd_gap_s", stale_for_s);
+  nvs_set_u32(this->nvs_handle_, "wd_last_ts", this->last_measurement_timestamp_s_);
+  nvs_set_u32(this->nvs_handle_, "wd_heap", esp_get_free_heap_size());
+  nvs_set_u8(this->nvs_handle_, "wd_flags", flags);
+  nvs_set_u8(this->nvs_handle_, "wd_pending", 1);
+  esp_err_t err = nvs_commit(this->nvs_handle_);
+  if (err != ESP_OK)
+    ESP_LOGE(TAG, "Failed to persist watchdog diagnostics (%d); they won't survive the restart", err);
+}
+
+std::string Powerpal::describe_watchdog_flags_(uint8_t flags) {
+  bool connected = flags & 0x01;
+  bool authenticated = flags & 0x02;
+  bool waiting_auth = flags & 0x20;
+  bool discovered = flags & 0x40;
+
+  if (!connected)
+    return "not connected to the Powerpal at all (ble_client link was down)";
+  if (!discovered)
+    return "connected, but service discovery never completed";
+  if (waiting_auth)
+    return "connected, waiting on BLE pairing/bonding that never completed";
+  if (!authenticated)
+    return "connected and discovered services, but the pairing code was never accepted";
+  return "connected and authenticated, but no measurement notifications arrived";
+}
+
+void Powerpal::report_watchdog_diagnostics_if_pending_() {
+  if (!this->nvs_ok_)
+    return;
+
+  uint8_t pending = 0;
+  if (nvs_get_u8(this->nvs_handle_, "wd_pending", &pending) != ESP_OK || pending == 0)
+    return;
+
+  uint32_t count = 0, gap_s = 0, last_ts = 0, heap = 0;
+  uint8_t flags = 0;
+  nvs_get_u32(this->nvs_handle_, "wd_count", &count);
+  nvs_get_u32(this->nvs_handle_, "wd_gap_s", &gap_s);
+  nvs_get_u32(this->nvs_handle_, "wd_last_ts", &last_ts);
+  nvs_get_u32(this->nvs_handle_, "wd_heap", &heap);
+  nvs_get_u8(this->nvs_handle_, "wd_flags", &flags);
+
+  std::string reason = describe_watchdog_flags_(flags);
+  ESP_LOGW(TAG,
+           "Recovered from a stale-measurement restart (#%u lifetime): no reading for %us, "
+           "last known device time %u, free heap was %u bytes at the time -- %s",
+           static_cast<unsigned>(count), static_cast<unsigned>(gap_s), static_cast<unsigned>(last_ts),
+           static_cast<unsigned>(heap), reason.c_str());
+
+  if (this->watchdog_restart_count_sensor_ != nullptr)
+    this->watchdog_restart_count_sensor_->publish_state(count);
+  if (this->watchdog_last_reason_sensor_ != nullptr)
+    this->watchdog_last_reason_sensor_->publish_state(reason);
+
+  nvs_set_u8(this->nvs_handle_, "wd_pending", 0);
+  nvs_commit(this->nvs_handle_);
+}
 
 
 std::string Powerpal::pkt_to_hex_(const uint8_t *data, uint16_t len) {
@@ -193,6 +305,11 @@ void Powerpal::remember_measurement_(uint32_t timestamp, uint16_t pulses) {
 }
 
 void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
+  // Any notification at all -- even a malformed one -- proves the BLE link and
+  // subscription are alive, which is all the stale-measurement watchdog cares about.
+  this->last_measurement_millis_ = millis();
+  this->have_measurement_since_boot_ = true;
+
   if (length < 6) {
     ESP_LOGW(TAG, "parse_measurement_: packet too short (%hu)", length);
     return;

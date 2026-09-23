@@ -85,6 +85,9 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void set_energy_cost(double energy_cost) { energy_cost_ = energy_cost; }
   void set_version(const std::string &version) { version_ = version; }
   void set_version_sensor(text_sensor::TextSensor *version_sensor) { version_sensor_ = version_sensor; }
+  void set_stale_restart_after(uint32_t seconds) { stale_restart_after_s_ = seconds; }
+  void set_watchdog_restart_count_sensor(sensor::Sensor *s) { watchdog_restart_count_sensor_ = s; }
+  void set_watchdog_last_reason_sensor(text_sensor::TextSensor *s) { watchdog_last_reason_sensor_ = s; }
   // Lets a lambda (e.g. a button press) surface these into a text_sensor, without
   // having to dig them out of the logs.
   std::string get_apikey() { return powerpal_apikey_; }
@@ -136,6 +139,27 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
 
   void request_subscription_(const char *trigger_reason);
   void reset_connection_state_();
+
+  // Optional self-healing watchdog: if no measurement arrives for this long, restart the
+  // whole device rather than wait for a BLE reconnect that (per field evidence) doesn't
+  // always come -- the ESP32's BLE stack itself can wedge in a way only a full restart
+  // clears, while WiFi/the API/this component's own loop stay completely responsive. 0
+  // (default) disables it. Before restarting, a snapshot of the connection state machine
+  // is written to NVS and reported once, on the next boot, so recurring failures can be
+  // diagnosed rather than just silently papered over. Combine with ESPHome's own `debug:`
+  // component (reset_reason, free heap) for the general picture; this only captures what
+  // nothing else could know -- exactly where in *this* component's own state machine it
+  // got stuck.
+  uint32_t stale_restart_after_s_{0};
+  uint32_t last_measurement_millis_{0};
+  bool have_measurement_since_boot_{false};
+  sensor::Sensor *watchdog_restart_count_sensor_{nullptr};
+  text_sensor::TextSensor *watchdog_last_reason_sensor_{nullptr};
+
+  void check_stale_watchdog_();
+  void persist_watchdog_diagnostics_(uint32_t stale_for_s);
+  void report_watchdog_diagnostics_if_pending_();
+  static std::string describe_watchdog_flags_(uint8_t flags);
 
 
   bool authenticated_{false};

@@ -47,6 +47,9 @@ CONF_COST = "cost"
 CONF_DAILY_PULSES = "daily_pulses"
 CONF_LED_SENSITIVITY = "led_sensitivity"
 CONF_VERSION = "version"
+CONF_STALE_RESTART_AFTER = "stale_restart_after"
+CONF_WATCHDOG_RESTART_COUNT = "watchdog_restart_count"
+CONF_WATCHDOG_LAST_REASON = "watchdog_last_reason"
 
 
 def _component_version():
@@ -184,6 +187,21 @@ CONFIG_SCHEMA = cv.All(
                 icon="mdi:tag-outline",
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
+            # Opt-in self-healing: if set, restart the whole device after this long without a
+            # measurement. Field evidence is that the ESP32's BLE stack can wedge in a way a
+            # same-process reconnect never recovers from, while WiFi/the API stay fully
+            # responsive -- see the comment on stale_restart_after_s_ in powerpal_ble.h. Unset
+            # by default so nobody's device reboots itself without asking for it.
+            cv.Optional(CONF_STALE_RESTART_AFTER): cv.positive_time_period_seconds,
+            cv.Optional(CONF_WATCHDOG_RESTART_COUNT): sensor.sensor_schema(
+                icon="mdi:restart-alert",
+                state_class=STATE_CLASS_TOTAL_INCREASING,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_WATCHDOG_LAST_REASON): text_sensor.text_sensor_schema(
+                icon="mdi:restart-alert",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
             cv.Optional(CONF_COST_PER_KWH): cv.float_range(min=0),
             cv.Optional(
                 CONF_POWERPAL_DEVICE_ID
@@ -256,6 +274,17 @@ async def to_code(config):
     if CONF_VERSION in config:
         sens = await text_sensor.new_text_sensor(config[CONF_VERSION])
         cg.add(var.set_version_sensor(sens))
+
+    if CONF_STALE_RESTART_AFTER in config:
+        cg.add(var.set_stale_restart_after(config[CONF_STALE_RESTART_AFTER]))
+
+    if CONF_WATCHDOG_RESTART_COUNT in config:
+        sens = await sensor.new_sensor(config[CONF_WATCHDOG_RESTART_COUNT])
+        cg.add(var.set_watchdog_restart_count_sensor(sens))
+
+    if CONF_WATCHDOG_LAST_REASON in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_WATCHDOG_LAST_REASON])
+        cg.add(var.set_watchdog_last_reason_sensor(sens))
 
     if CONF_COST_PER_KWH in config:
         cg.add(var.set_energy_cost(config[CONF_COST_PER_KWH]))
