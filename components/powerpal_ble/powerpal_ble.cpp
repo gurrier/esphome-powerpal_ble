@@ -148,7 +148,7 @@ void Powerpal::setup() {
 
   this->reset_connection_state_();
 
-  this->report_watchdog_diagnostics_if_pending_();
+  this->report_watchdog_diagnostics_();
   if (this->stale_restart_after_s_ > 0) {
     this->set_interval(30000, [this]() { this->check_stale_watchdog_(); });
   }
@@ -222,33 +222,45 @@ std::string Powerpal::describe_watchdog_flags_(uint8_t flags) {
   return "connected and authenticated, but no measurement notifications arrived";
 }
 
-void Powerpal::report_watchdog_diagnostics_if_pending_() {
+void Powerpal::report_watchdog_diagnostics_() {
   if (!this->nvs_ok_)
     return;
+
+  uint32_t count = 0;
+  esp_err_t err = nvs_get_u32(this->nvs_handle_, "wd_count", &count);
+  if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
+    return;  // NVS read genuinely failed; don't publish a value we can't trust
+
+  // Re-published from NVS on every boot, the same reasoning as total/daily energy in
+  // setup(): otherwise these would only ever show a value on the one boot right after
+  // an event, then go blank again (misleadingly, since the count in flash is unchanged)
+  // until the next one. An ordinary reboot -- OTA, the restart button, a power cycle --
+  // must not spam this or the paired HA automation; that's what wd_pending gates below.
+  if (this->watchdog_restart_count_sensor_ != nullptr)
+    this->watchdog_restart_count_sensor_->publish_state(count);
+
+  std::string reason;
+  if (count > 0) {
+    uint8_t flags = 0;
+    nvs_get_u8(this->nvs_handle_, "wd_flags", &flags);
+    reason = describe_watchdog_flags_(flags);
+    if (this->watchdog_last_reason_sensor_ != nullptr)
+      this->watchdog_last_reason_sensor_->publish_state(reason);
+  }
 
   uint8_t pending = 0;
   if (nvs_get_u8(this->nvs_handle_, "wd_pending", &pending) != ESP_OK || pending == 0)
     return;
 
-  uint32_t count = 0, gap_s = 0, last_ts = 0, heap = 0;
-  uint8_t flags = 0;
-  nvs_get_u32(this->nvs_handle_, "wd_count", &count);
+  uint32_t gap_s = 0, last_ts = 0, heap = 0;
   nvs_get_u32(this->nvs_handle_, "wd_gap_s", &gap_s);
   nvs_get_u32(this->nvs_handle_, "wd_last_ts", &last_ts);
   nvs_get_u32(this->nvs_handle_, "wd_heap", &heap);
-  nvs_get_u8(this->nvs_handle_, "wd_flags", &flags);
-
-  std::string reason = describe_watchdog_flags_(flags);
   ESP_LOGW(TAG,
            "Recovered from a stale-measurement restart (#%u lifetime): no reading for %us, "
            "last known device time %u, free heap was %u bytes at the time -- %s",
            static_cast<unsigned>(count), static_cast<unsigned>(gap_s), static_cast<unsigned>(last_ts),
            static_cast<unsigned>(heap), reason.c_str());
-
-  if (this->watchdog_restart_count_sensor_ != nullptr)
-    this->watchdog_restart_count_sensor_->publish_state(count);
-  if (this->watchdog_last_reason_sensor_ != nullptr)
-    this->watchdog_last_reason_sensor_->publish_state(reason);
 
   nvs_set_u8(this->nvs_handle_, "wd_pending", 0);
   nvs_commit(this->nvs_handle_);

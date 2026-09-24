@@ -158,7 +158,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
 
   void check_stale_watchdog_();
   void persist_watchdog_diagnostics_(uint32_t stale_for_s);
-  void report_watchdog_diagnostics_if_pending_();
+  void report_watchdog_diagnostics_();
   static std::string describe_watchdog_flags_(uint8_t flags);
 
 
