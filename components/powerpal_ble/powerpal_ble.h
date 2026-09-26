@@ -157,6 +157,13 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   text_sensor::TextSensor *watchdog_last_reason_sensor_{nullptr};
 
   void check_stale_watchdog_();
+  // The throttled commit in parse_measurement_() deliberately leaves up to ~60s or ~100
+  // pulses uncommitted at any moment, to spare the flash. That's an acceptable, unavoidable
+  // loss on a genuine power cut -- but this restart is a deliberate, graceful App.safe_reboot(),
+  // not a power cut, so there's no reason not to flush first. Confirmed in the field: without
+  // this, HA logged a total_increasing violation (the total dropped ~7 Wh) on the reading
+  // right after a watchdog restart, from exactly this gap.
+  void flush_energy_counters_();
   void persist_watchdog_diagnostics_(uint32_t stale_for_s);
   void report_watchdog_diagnostics_();
   static std::string describe_watchdog_flags_(uint8_t flags);

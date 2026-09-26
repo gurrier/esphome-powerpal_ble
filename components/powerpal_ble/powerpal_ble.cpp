@@ -166,8 +166,25 @@ void Powerpal::check_stale_watchdog_() {
 
   ESP_LOGE(TAG, "No measurement received in %us (limit %us); restarting to recover",
            static_cast<unsigned>(elapsed_s), static_cast<unsigned>(this->stale_restart_after_s_));
+  this->flush_energy_counters_();
   this->persist_watchdog_diagnostics_(elapsed_s);
   App.safe_reboot();
+}
+
+void Powerpal::flush_energy_counters_() {
+  if (!this->nvs_ok_)
+    return;
+  nvs_set_u64(this->nvs_handle_, "total", this->total_pulses_);
+  nvs_set_u64(this->nvs_handle_, "daily", this->daily_pulses_);
+  esp_err_t err = nvs_commit(this->nvs_handle_);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to flush energy counters before restart (%d); up to the last "
+                  "throttled commit may be lost, same as an unplanned power loss would",
+             err);
+    return;
+  }
+  this->last_commit_ts_ = millis() / 1000;
+  this->last_pulses_for_threshold_ = this->total_pulses_;
 }
 
 void Powerpal::persist_watchdog_diagnostics_(uint32_t stale_for_s) {
