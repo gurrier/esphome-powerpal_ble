@@ -20,6 +20,7 @@
 #ifdef USE_ESP32
 
 #include <esp_gattc_api.h>
+#include <esp_gap_ble_api.h>
 
 namespace esphome {
 namespace powerpal_ble {
@@ -167,6 +168,44 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void persist_watchdog_diagnostics_(uint32_t stale_for_s);
   void report_watchdog_diagnostics_();
   static std::string describe_watchdog_flags_(uint8_t flags);
+  uint8_t current_watchdog_flags_();
+  // probe_recorded is false for events persisted by firmware that predates the probe.
+  static std::string describe_stall_(uint8_t flags, bool probe_recorded, uint8_t probe_result, uint16_t cccd_value,
+                                     bool rssi_ok, int8_t rssi, uint8_t connects);
+
+  // Stall probe. "Connected and authenticated, but no notifications" is the most common
+  // watchdog reason in the field, and the flags alone can't say *why*: the Powerpal may
+  // have dropped our subscription, stopped sending while still subscribed, or the link may
+  // be dead while the ESP32 still thinks it's up. Partway into a stall (while still
+  // connected, before the restart), read the measurement CCCD back from the Powerpal and
+  // the link RSSI; each answer points at a different fix that wouldn't need a restart.
+  // Measurements arrive once a minute, so anything earlier than this would fire on a
+  // normal, slightly late reading.
+  static constexpr uint32_t PROBE_AFTER_S = 90;
+  enum ProbeResult : uint8_t {
+    PROBE_NOT_RUN = 0,        // never reached the probe point while connected and authenticated
+    PROBE_NO_REPLY = 1,       // read sent, nothing came back before the restart
+    PROBE_READ_OK = 2,        // CCCD value in probe_cccd_value_
+    PROBE_READ_FAILED = 3,    // the Powerpal answered with a GATT error (in probe_cccd_value_)
+    PROBE_SUBMIT_FAILED = 4,  // the local BLE stack refused to send the read
+  };
+  void probe_stalled_link_(uint32_t stale_for_s);
+  void reset_probe_state_();
+  bool probe_sent_{false};
+  uint8_t probe_flags_{0};  // current_watchdog_flags_() at the moment the probe fired
+  uint8_t probe_cccd_result_{PROBE_NOT_RUN};
+  uint16_t probe_cccd_value_{0};
+  bool probe_rssi_ok_{false};
+  int8_t probe_rssi_{0};
+
+  uint16_t measurement_cccd_handle_{0};
+  // Whether this connection's CCCD write (done by ESPHome after register_for_notify) was
+  // confirmed by the Powerpal. ESPHome only logs a failure, so nothing else would notice.
+  bool cccd_write_confirmed_{false};
+  // Successful BLE (re)connects since the last measurement: a stall that spans a silent
+  // reconnect, whose re-subscription didn't take, looks exactly like a Powerpal that
+  // stopped sending, unless this is recorded.
+  uint8_t connects_since_measurement_{0};
 
 
   bool authenticated_{false};

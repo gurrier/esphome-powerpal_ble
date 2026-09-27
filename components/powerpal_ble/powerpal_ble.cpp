@@ -50,6 +50,8 @@ void Powerpal::reset_connection_state_() {
   this->uuid_char_handle_ = 0;
   this->serial_number_char_handle_ = 0;
   this->led_sensitivity_char_handle_ = 0;
+  this->measurement_cccd_handle_ = 0;
+  this->cccd_write_confirmed_ = false;
 
   // last_measurement_timestamp_s_ is intentionally NOT reset here: the Powerpal keeps
   // counting pulses on its own hardware regardless of our BLE connection state, so
@@ -63,6 +65,8 @@ void Powerpal::on_connect() {
     return;
   }
   ESP_LOGI(TAG, "[%s] Connected to Powerpal GATT server", this->parent_->address_str());
+  if (this->connects_since_measurement_ < UINT8_MAX)
+    this->connects_since_measurement_++;
   this->pending_subscription_ = true;
   this->subscription_in_progress_ = false;
   this->subscription_retry_scheduled_ = false;
@@ -161,8 +165,13 @@ void Powerpal::check_stale_watchdog_() {
     return;
 
   uint32_t elapsed_s = (millis() - this->last_measurement_millis_) / 1000;
-  if (elapsed_s < this->stale_restart_after_s_)
+  if (elapsed_s < this->stale_restart_after_s_) {
+    // Only while there's still time for the replies to land; probing in the same pass as
+    // the restart would record "no reply" for a link that was never given a chance.
+    if (elapsed_s >= PROBE_AFTER_S && !this->probe_sent_)
+      this->probe_stalled_link_(elapsed_s);
     return;
+  }
 
   ESP_LOGE(TAG, "No measurement received in %us (limit %us); restarting to recover",
            static_cast<unsigned>(elapsed_s), static_cast<unsigned>(this->stale_restart_after_s_));
@@ -187,14 +196,43 @@ void Powerpal::flush_energy_counters_() {
   this->last_pulses_for_threshold_ = this->total_pulses_;
 }
 
-void Powerpal::persist_watchdog_diagnostics_(uint32_t stale_for_s) {
-  if (!this->nvs_ok_)
+void Powerpal::probe_stalled_link_(uint32_t stale_for_s) {
+  this->probe_sent_ = true;
+  this->probe_flags_ = this->current_watchdog_flags_();
+  if (this->parent_ == nullptr || !this->parent_->connected()) {
+    ESP_LOGW(TAG, "No measurement for %us and not connected to the Powerpal; nothing to probe",
+             static_cast<unsigned>(stale_for_s));
     return;
+  }
+  ESP_LOGW(TAG, "[%s] No measurement for %us while connected; probing the link",
+           this->parent_->address_str(), static_cast<unsigned>(stale_for_s));
 
-  uint32_t count = 0;
-  nvs_get_u32(this->nvs_handle_, "wd_count", &count);
-  ++count;
+  esp_err_t err = esp_ble_gap_read_rssi(this->parent_->get_remote_bda());
+  if (err != ESP_OK)
+    ESP_LOGW(TAG, "Stall probe: RSSI read request failed (%d)", err);
 
+  // Before authentication the flag-based reason already pins down where it's stuck.
+  if (!this->authenticated_ || this->measurement_cccd_handle_ == 0)
+    return;
+  this->probe_cccd_result_ = PROBE_NO_REPLY;
+  err = esp_ble_gattc_read_char_descr(this->parent_->get_gattc_if(), this->parent_->get_conn_id(),
+                                      this->measurement_cccd_handle_, ESP_GATT_AUTH_REQ_NONE);
+  if (err != ESP_OK) {
+    this->probe_cccd_result_ = PROBE_SUBMIT_FAILED;
+    ESP_LOGW(TAG, "Stall probe: CCCD read request failed (%d)", err);
+  }
+}
+
+void Powerpal::reset_probe_state_() {
+  this->probe_sent_ = false;
+  this->probe_flags_ = 0;
+  this->probe_cccd_result_ = PROBE_NOT_RUN;
+  this->probe_cccd_value_ = 0;
+  this->probe_rssi_ok_ = false;
+  this->probe_rssi_ = 0;
+}
+
+uint8_t Powerpal::current_watchdog_flags_() {
   uint8_t flags = 0;
   if (this->parent_ != nullptr && this->parent_->connected())
     flags |= 0x01;
@@ -210,12 +248,29 @@ void Powerpal::persist_watchdog_diagnostics_(uint32_t stale_for_s) {
     flags |= 0x20;
   if (this->measurement_char_handle_ != 0)
     flags |= 0x40;  // service discovery had completed
+  if (this->cccd_write_confirmed_)
+    flags |= 0x80;
+  return flags;
+}
+
+void Powerpal::persist_watchdog_diagnostics_(uint32_t stale_for_s) {
+  if (!this->nvs_ok_)
+    return;
+
+  uint32_t count = 0;
+  nvs_get_u32(this->nvs_handle_, "wd_count", &count);
+  ++count;
 
   nvs_set_u32(this->nvs_handle_, "wd_count", count);
   nvs_set_u32(this->nvs_handle_, "wd_gap_s", stale_for_s);
   nvs_set_u32(this->nvs_handle_, "wd_last_ts", this->last_measurement_timestamp_s_);
   nvs_set_u32(this->nvs_handle_, "wd_heap", esp_get_free_heap_size());
-  nvs_set_u8(this->nvs_handle_, "wd_flags", flags);
+  nvs_set_u8(this->nvs_handle_, "wd_flags", this->current_watchdog_flags_());
+  nvs_set_u8(this->nvs_handle_, "wd_probe", this->probe_cccd_result_);
+  nvs_set_u16(this->nvs_handle_, "wd_cccd", this->probe_cccd_value_);
+  nvs_set_u8(this->nvs_handle_, "wd_rssi_ok", this->probe_rssi_ok_ ? 1 : 0);
+  nvs_set_i8(this->nvs_handle_, "wd_rssi", this->probe_rssi_);
+  nvs_set_u8(this->nvs_handle_, "wd_connects", this->connects_since_measurement_);
   nvs_set_u8(this->nvs_handle_, "wd_pending", 1);
   esp_err_t err = nvs_commit(this->nvs_handle_);
   if (err != ESP_OK)
@@ -239,6 +294,56 @@ std::string Powerpal::describe_watchdog_flags_(uint8_t flags) {
   return "connected and authenticated, but no measurement notifications arrived";
 }
 
+std::string Powerpal::describe_stall_(uint8_t flags, bool probe_recorded, uint8_t probe_result, uint16_t cccd_value,
+                                      bool rssi_ok, int8_t rssi, uint8_t connects) {
+  std::string reason = describe_watchdog_flags_(flags);
+  if (!probe_recorded)
+    return reason;
+
+  char buf[112];
+  switch (probe_result) {
+    case PROBE_READ_OK:
+      if (cccd_value == 0x0001) {
+        reason = "connected and subscribed (Powerpal confirmed notifications on), but it stopped sending";
+      } else if (cccd_value == 0x0000) {
+        reason = "connected, but the Powerpal had turned our notifications off (subscription lost)";
+      } else {
+        snprintf(buf, sizeof(buf), "connected, but the Powerpal reported an unexpected subscription value 0x%04x",
+                 cccd_value);
+        reason = buf;
+      }
+      break;
+    case PROBE_READ_FAILED:
+      snprintf(buf, sizeof(buf), "connected, but the Powerpal rejected a subscription check (GATT error %u)",
+               cccd_value);
+      reason = buf;
+      break;
+    case PROBE_NO_REPLY:
+      reason = "reported connected, but the Powerpal never answered a subscription check (link likely dead)";
+      break;
+    case PROBE_SUBMIT_FAILED:
+      reason = "reported connected, but the ESP32's BLE stack refused to send a subscription check";
+      break;
+    default:
+      break;  // PROBE_NOT_RUN: the flag-based reason is all there is
+  }
+
+  bool connected = flags & 0x01;
+  if (probe_result != PROBE_NOT_RUN && !connected)
+    reason += "; the link then dropped before the restart";
+  if (rssi_ok) {
+    snprintf(buf, sizeof(buf), "; RSSI %d dBm", rssi);
+    reason += buf;
+  }
+  if (connects > 0) {
+    snprintf(buf, sizeof(buf), "; %u BLE reconnect%s since the last reading", connects, connects == 1 ? "" : "s");
+    reason += buf;
+    if (connected)
+      reason += (flags & 0x80) ? ", re-subscribe confirmed" : ", re-subscribe NOT confirmed";
+  }
+  return reason;
+}
+
 void Powerpal::report_watchdog_diagnostics_() {
   if (!this->nvs_ok_)
     return;
@@ -258,9 +363,16 @@ void Powerpal::report_watchdog_diagnostics_() {
 
   std::string reason;
   if (count > 0) {
-    uint8_t flags = 0;
+    uint8_t flags = 0, probe = PROBE_NOT_RUN, rssi_ok = 0, connects = 0;
+    uint16_t cccd = 0;
+    int8_t rssi = 0;
     nvs_get_u8(this->nvs_handle_, "wd_flags", &flags);
-    reason = describe_watchdog_flags_(flags);
+    bool probe_recorded = nvs_get_u8(this->nvs_handle_, "wd_probe", &probe) == ESP_OK;
+    nvs_get_u16(this->nvs_handle_, "wd_cccd", &cccd);
+    nvs_get_u8(this->nvs_handle_, "wd_rssi_ok", &rssi_ok);
+    nvs_get_i8(this->nvs_handle_, "wd_rssi", &rssi);
+    nvs_get_u8(this->nvs_handle_, "wd_connects", &connects);
+    reason = describe_stall_(flags, probe_recorded, probe, cccd, rssi_ok != 0, rssi, connects);
     if (this->watchdog_last_reason_sensor_ != nullptr)
       this->watchdog_last_reason_sensor_->publish_state(reason);
   }
@@ -334,6 +446,19 @@ void Powerpal::remember_measurement_(uint32_t timestamp, uint16_t pulses) {
 }
 
 void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
+  // A stall that recovers between the probe and the restart threshold is still a data
+  // point about what state the link was in.
+  if (this->probe_sent_) {
+    uint32_t gap_s = (millis() - this->last_measurement_millis_) / 1000;
+    ESP_LOGW(TAG, "Measurements resumed after %us without a restart; during the stall: %s",
+             static_cast<unsigned>(gap_s),
+             describe_stall_(this->probe_flags_, true, this->probe_cccd_result_, this->probe_cccd_value_,
+                             this->probe_rssi_ok_, this->probe_rssi_, this->connects_since_measurement_)
+                 .c_str());
+  }
+  this->reset_probe_state_();
+  this->connects_since_measurement_ = 0;
+
   // Any notification at all -- even a malformed one -- proves the BLE link and
   // subscription are alive, which is all the stale-measurement watchdog cares about.
   this->last_measurement_millis_ = millis();
@@ -628,6 +753,12 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       if (auto *ch = this->parent_->get_characteristic(POWERPAL_SERVICE_UUID, POWERPAL_CHARACTERISTIC_MEASUREMENT_UUID)) {
         this->measurement_char_handle_ = ch->handle;
         ESP_LOGI(TAG, "  → measurement handle = 0x%02x", ch->handle);
+        if (auto *cccd = ch->get_descriptor(static_cast<uint16_t>(0x2902))) {
+          this->measurement_cccd_handle_ = cccd->handle;
+          ESP_LOGI(TAG, "  → measurement CCCD handle = 0x%02x", cccd->handle);
+        } else {
+          ESP_LOGW(TAG, "  ! measurement CCCD not found; the stall probe won't be able to check the subscription");
+        }
       } else {
         ESP_LOGE(TAG, "  ! measurement characteristic not found");
       }
@@ -857,6 +988,40 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
                this->parent_->address_str(), param->write.handle);
       break;
     }  // ESP_GATTC_WRITE_CHAR_EVT
+    case ESP_GATTC_WRITE_DESCR_EVT: {
+      if (this->measurement_cccd_handle_ == 0 || param->write.handle != this->measurement_cccd_handle_)
+        break;
+      this->cccd_write_confirmed_ = param->write.status == ESP_GATT_OK;
+      if (this->cccd_write_confirmed_) {
+        ESP_LOGD(TAG, "[%s] Powerpal confirmed measurement notifications enabled", this->parent_->address_str());
+      } else {
+        ESP_LOGW(TAG, "[%s] Powerpal rejected enabling measurement notifications, status=%d",
+                 this->parent_->address_str(), param->write.status);
+      }
+      break;
+    }
+    case ESP_GATTC_READ_DESCR_EVT: {
+      if (!this->probe_sent_ || this->measurement_cccd_handle_ == 0 ||
+          param->read.handle != this->measurement_cccd_handle_)
+        break;
+      if (param->read.status != ESP_GATT_OK) {
+        this->probe_cccd_result_ = PROBE_READ_FAILED;
+        this->probe_cccd_value_ = param->read.status;
+        ESP_LOGW(TAG, "[%s] Stall probe: Powerpal rejected the CCCD read, status=%d", this->parent_->address_str(),
+                 param->read.status);
+        break;
+      }
+      uint16_t value = 0;
+      if (param->read.value_len >= 1)
+        value = param->read.value[0];
+      if (param->read.value_len >= 2)
+        value |= static_cast<uint16_t>(param->read.value[1]) << 8;
+      this->probe_cccd_result_ = PROBE_READ_OK;
+      this->probe_cccd_value_ = value;
+      ESP_LOGW(TAG, "[%s] Stall probe: Powerpal reports measurement notifications %s (CCCD 0x%04x)",
+               this->parent_->address_str(), (value & 0x0001) ? "ON" : "OFF", value);
+      break;
+    }
     case ESP_GATTC_NOTIFY_EVT: {
       ESP_LOGD(TAG, "[%s] Received Notification", this->parent_->address_str());
 
@@ -901,6 +1066,20 @@ void Powerpal::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_pa
         this->pending_subscription_ = false;
         this->subscription_in_progress_ = false;
         this->subscription_retry_scheduled_ = false;
+      }
+      break;
+    }
+    case ESP_GAP_BLE_READ_RSSI_COMPLETE_EVT: {
+      // Also fires for anyone else's RSSI read (e.g. a ble_client rssi sensor on this link).
+      if (!this->probe_sent_ || !this->parent_->check_addr(param->read_rssi_cmpl.remote_addr))
+        break;
+      if (param->read_rssi_cmpl.status == ESP_BT_STATUS_SUCCESS) {
+        this->probe_rssi_ok_ = true;
+        this->probe_rssi_ = param->read_rssi_cmpl.rssi;
+        ESP_LOGW(TAG, "[%s] Stall probe: link RSSI %d dBm", this->parent_->address_str(), this->probe_rssi_);
+      } else {
+        ESP_LOGW(TAG, "[%s] Stall probe: RSSI read failed, status=%d", this->parent_->address_str(),
+                 param->read_rssi_cmpl.status);
       }
       break;
     }
