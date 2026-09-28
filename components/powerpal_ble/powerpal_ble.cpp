@@ -155,7 +155,15 @@ void Powerpal::setup() {
   this->report_watchdog_diagnostics_();
   if (this->stale_restart_after_s_ > 0) {
     this->set_interval(30000, [this]() { this->check_stale_watchdog_(); });
+  } else {
+    this->disable_loop();  // loop() only feeds the watchdog's diagnostics
   }
+}
+
+void Powerpal::loop() {
+  // Every pass rather than on the 30s watchdog tick, so a client that keeps failing and
+  // retrying between ticks isn't mistaken for one that has sat in the same state all along.
+  this->track_client_state_();
 }
 
 void Powerpal::check_stale_watchdog_() {
@@ -199,9 +207,10 @@ void Powerpal::flush_energy_counters_() {
 void Powerpal::probe_stalled_link_(uint32_t stale_for_s) {
   this->probe_sent_ = true;
   this->probe_flags_ = this->current_watchdog_flags_();
+  this->probe_link_ = this->capture_link_snapshot_();
   if (this->parent_ == nullptr || !this->parent_->connected()) {
-    ESP_LOGW(TAG, "No measurement for %us and not connected to the Powerpal; nothing to probe",
-             static_cast<unsigned>(stale_for_s));
+    ESP_LOGW(TAG, "No measurement for %us and not connected to the Powerpal: %s", static_cast<unsigned>(stale_for_s),
+             describe_link_(this->probe_link_).c_str());
     return;
   }
   ESP_LOGW(TAG, "[%s] No measurement for %us while connected; probing the link",
@@ -221,6 +230,104 @@ void Powerpal::probe_stalled_link_(uint32_t stale_for_s) {
     this->probe_cccd_result_ = PROBE_SUBMIT_FAILED;
     ESP_LOGW(TAG, "Stall probe: CCCD read request failed (%d)", err);
   }
+}
+
+bool PowerpalAdvertisementWatcher::parse_device(const espbt::ESPBTDevice &device) {
+  this->powerpal_->note_advertisement(device.address_uint64());
+  return false;  // purely an observer: never claim a device on anyone else's behalf
+}
+
+void Powerpal::note_advertisement(uint64_t address) {
+  uint32_t now = millis();
+  if (this->ads_any_ < UINT16_MAX)
+    this->ads_any_++;
+  this->last_ad_any_ms_ = now;
+  if (this->parent_ != nullptr && address == this->parent_->get_address()) {
+    if (this->ads_powerpal_ < UINT16_MAX)
+      this->ads_powerpal_++;
+    this->last_ad_powerpal_ms_ = now;
+  }
+}
+
+void Powerpal::reset_advertisement_counts_() {
+  this->ads_any_ = 0;
+  this->ads_powerpal_ = 0;
+}
+
+void Powerpal::track_client_state_() {
+  if (this->parent_ == nullptr)
+    return;
+  uint8_t state = static_cast<uint8_t>(this->parent_->state());
+  if (state != this->observed_client_state_) {
+    this->observed_client_state_ = state;
+    this->observed_client_state_since_ms_ = millis();
+  }
+}
+
+PowerpalLinkSnapshot Powerpal::capture_link_snapshot_() {
+  this->track_client_state_();
+  uint32_t now = millis();
+  auto age_s = [now](uint16_t count, uint32_t last_ms) -> uint16_t {
+    if (count == 0)
+      return UINT16_MAX;
+    uint32_t s = (now - last_ms) / 1000;
+    return s >= UINT16_MAX ? UINT16_MAX - 1 : static_cast<uint16_t>(s);
+  };
+
+  PowerpalLinkSnapshot s{};
+  s.version = POWERPAL_LINK_SNAPSHOT_VERSION;
+  s.client_state = this->observed_client_state_;
+  uint32_t in_state_s = (now - this->observed_client_state_since_ms_) / 1000;
+  s.client_state_for_s = in_state_s >= UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(in_state_s);
+  s.scanner_state = espbt::global_esp32_ble_tracker != nullptr
+                        ? static_cast<uint8_t>(espbt::global_esp32_ble_tracker->get_scanner_state())
+                        : 0xFF;
+  s.failed_connects = this->failed_connects_;
+  s.last_connect_status = this->last_connect_status_;
+  s.disconnects = this->disconnects_;
+  s.last_disconnect_reason = this->last_disconnect_reason_;
+  s.ads_any = this->ads_any_;
+  s.ads_any_age_s = age_s(this->ads_any_, this->last_ad_any_ms_);
+  s.ads_powerpal = this->ads_powerpal_;
+  s.ads_powerpal_age_s = age_s(this->ads_powerpal_, this->last_ad_powerpal_ms_);
+  return s;
+}
+
+std::string Powerpal::describe_link_(const PowerpalLinkSnapshot &link) {
+  static const char *const SCANNER_STATES[] = {"IDLE", "STARTING", "RUNNING", "FAILED", "STOPPING", "STOPPED"};
+  char buf[96];
+  std::string out = "BLE client ";
+  out += espbt::client_state_to_string(static_cast<espbt::ClientState>(link.client_state));
+  if (link.client_state != static_cast<uint8_t>(espbt::ClientState::IDLE)) {
+    snprintf(buf, sizeof(buf), " for %us", link.client_state_for_s);
+    out += buf;
+  }
+  out += "; scanner ";
+  out += link.scanner_state < 6 ? SCANNER_STATES[link.scanner_state] : "unknown";
+
+  if (link.ads_powerpal == 0) {
+    out += "; Powerpal not heard";
+  } else {
+    snprintf(buf, sizeof(buf), "; Powerpal heard %ux, last %us ago", link.ads_powerpal, link.ads_powerpal_age_s);
+    out += buf;
+  }
+  if (link.ads_any == 0) {
+    out += ", nothing else either";
+  } else {
+    snprintf(buf, sizeof(buf), " (all devices: %u, last %us ago)", link.ads_any, link.ads_any_age_s);
+    out += buf;
+  }
+
+  if (link.failed_connects > 0) {
+    snprintf(buf, sizeof(buf), "; %u failed connect%s, last status %u", link.failed_connects,
+             link.failed_connects == 1 ? "" : "s", link.last_connect_status);
+    out += buf;
+  }
+  if (link.disconnects > 0) {
+    snprintf(buf, sizeof(buf), "; dropped with reason 0x%02x", link.last_disconnect_reason);
+    out += buf;
+  }
+  return out;
 }
 
 void Powerpal::reset_probe_state_() {
@@ -271,6 +378,9 @@ void Powerpal::persist_watchdog_diagnostics_(uint32_t stale_for_s) {
   nvs_set_u8(this->nvs_handle_, "wd_rssi_ok", this->probe_rssi_ok_ ? 1 : 0);
   nvs_set_i8(this->nvs_handle_, "wd_rssi", this->probe_rssi_);
   nvs_set_u8(this->nvs_handle_, "wd_connects", this->connects_since_measurement_);
+  PowerpalLinkSnapshot link = this->capture_link_snapshot_();
+  ESP_LOGE(TAG, "Link state at restart: %s", describe_link_(link).c_str());
+  nvs_set_blob(this->nvs_handle_, "wd_link", &link, sizeof(link));
   nvs_set_u8(this->nvs_handle_, "wd_pending", 1);
   esp_err_t err = nvs_commit(this->nvs_handle_);
   if (err != ESP_OK)
@@ -295,7 +405,8 @@ std::string Powerpal::describe_watchdog_flags_(uint8_t flags) {
 }
 
 std::string Powerpal::describe_stall_(uint8_t flags, bool probe_recorded, uint8_t probe_result, uint16_t cccd_value,
-                                      bool rssi_ok, int8_t rssi, uint8_t connects) {
+                                      bool rssi_ok, int8_t rssi, uint8_t connects,
+                                      const PowerpalLinkSnapshot *link) {
   std::string reason = describe_watchdog_flags_(flags);
   if (!probe_recorded)
     return reason;
@@ -331,6 +442,10 @@ std::string Powerpal::describe_stall_(uint8_t flags, bool probe_recorded, uint8_
   bool connected = flags & 0x01;
   if (probe_result != PROBE_NOT_RUN && !connected)
     reason += "; the link then dropped before the restart";
+  if (!connected && link != nullptr) {
+    reason = probe_result == PROBE_NOT_RUN ? std::string("not connected to the Powerpal: ") : reason + "; ";
+    reason += describe_link_(*link);
+  }
   if (rssi_ok) {
     snprintf(buf, sizeof(buf), "; RSSI %d dBm", rssi);
     reason += buf;
@@ -340,6 +455,11 @@ std::string Powerpal::describe_stall_(uint8_t flags, bool probe_recorded, uint8_
     reason += buf;
     if (connected)
       reason += (flags & 0x80) ? ", re-subscribe confirmed" : ", re-subscribe NOT confirmed";
+  }
+  // Home Assistant rejects a state longer than 255 characters.
+  if (reason.size() > 255) {
+    reason.resize(252);
+    reason += "...";
   }
   return reason;
 }
@@ -372,7 +492,12 @@ void Powerpal::report_watchdog_diagnostics_() {
     nvs_get_u8(this->nvs_handle_, "wd_rssi_ok", &rssi_ok);
     nvs_get_i8(this->nvs_handle_, "wd_rssi", &rssi);
     nvs_get_u8(this->nvs_handle_, "wd_connects", &connects);
-    reason = describe_stall_(flags, probe_recorded, probe, cccd, rssi_ok != 0, rssi, connects);
+    PowerpalLinkSnapshot link{};
+    size_t link_len = sizeof(link);
+    bool link_recorded = nvs_get_blob(this->nvs_handle_, "wd_link", &link, &link_len) == ESP_OK &&
+                         link_len == sizeof(link) && link.version == POWERPAL_LINK_SNAPSHOT_VERSION;
+    reason = describe_stall_(flags, probe_recorded, probe, cccd, rssi_ok != 0, rssi, connects,
+                             link_recorded ? &link : nullptr);
     if (this->watchdog_last_reason_sensor_ != nullptr)
       this->watchdog_last_reason_sensor_->publish_state(reason);
   }
@@ -453,11 +578,15 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
     ESP_LOGW(TAG, "Measurements resumed after %us without a restart; during the stall: %s",
              static_cast<unsigned>(gap_s),
              describe_stall_(this->probe_flags_, true, this->probe_cccd_result_, this->probe_cccd_value_,
-                             this->probe_rssi_ok_, this->probe_rssi_, this->connects_since_measurement_)
+                             this->probe_rssi_ok_, this->probe_rssi_, this->connects_since_measurement_,
+                             &this->probe_link_)
                  .c_str());
   }
   this->reset_probe_state_();
   this->connects_since_measurement_ = 0;
+  this->failed_connects_ = 0;
+  this->disconnects_ = 0;
+  this->reset_advertisement_counts_();
 
   // Any notification at all -- even a malformed one -- proves the BLE link and
   // subscription are alive, which is all the stale-measurement watchdog cares about.
@@ -721,12 +850,21 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       } else {
         ESP_LOGW(TAG, "[%s] ESP_GATTC_OPEN_EVT failed, status=%d", this->parent_->address_str(),
                  param->open.status);
+        if (this->failed_connects_ < UINT8_MAX)
+          this->failed_connects_++;
+        this->last_connect_status_ = static_cast<uint8_t>(param->open.status);
         this->reset_connection_state_();
       }
       break;
     }
     case ESP_GATTC_DISCONNECT_EVT: {
-      ESP_LOGW(TAG, "[%s] ESP_GATTC_DISCONNECT_EVT", this->parent_->address_str());
+      ESP_LOGW(TAG, "[%s] ESP_GATTC_DISCONNECT_EVT, reason=0x%02x", this->parent_->address_str(),
+               param->disconnect.reason);
+      if (this->disconnects_ < UINT8_MAX)
+        this->disconnects_++;
+      this->last_disconnect_reason_ = static_cast<uint16_t>(param->disconnect.reason);
+      // Advertisements heard while still connected say nothing about why it's not coming back.
+      this->reset_advertisement_counts_();
       this->on_disconnect();
       break;
     }

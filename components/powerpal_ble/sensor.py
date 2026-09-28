@@ -5,7 +5,7 @@ from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import sensor, ble_client, text_sensor, time
+from esphome.components import sensor, ble_client, esp32_ble_tracker, text_sensor, time
 from esphome.const import (
     CONF_ID,
     CONF_BATTERY_LEVEL,
@@ -27,7 +27,7 @@ from esphome.const import (
 _LOGGER = logging.getLogger(__name__)
 
 CODEOWNERS = ["@gurrier"]
-DEPENDENCIES = ["ble_client"]
+DEPENDENCIES = ["ble_client", "esp32_ble_tracker"]
 AUTO_LOAD = ["text_sensor"]
 
 powerpal_ble_ns = cg.esphome_ns.namespace("powerpal_ble")
@@ -212,6 +212,7 @@ CONFIG_SCHEMA = cv.All(
         }
     )
     .extend(ble_client.BLE_CLIENT_SCHEMA)
+    .extend(esp32_ble_tracker.ESP_BLE_DEVICE_SCHEMA)
     .extend(cv.COMPONENT_SCHEMA),
     _validate,
 )
@@ -277,6 +278,9 @@ async def to_code(config):
 
     if CONF_STALE_RESTART_AFTER in config:
         cg.add(var.set_stale_restart_after(config[CONF_STALE_RESTART_AFTER]))
+        # Lets the watchdog's diagnostics tell a silent Powerpal from a stalled scanner.
+        # Only with the watchdog on, since it sees every advertisement in range.
+        await esp32_ble_tracker.register_ble_device(var.get_advertisement_watcher(), config)
 
     if CONF_WATCHDOG_RESTART_COUNT in config:
         sens = await sensor.new_sensor(config[CONF_WATCHDOG_RESTART_COUNT])

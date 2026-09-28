@@ -45,12 +45,46 @@ static const espbt::ESPBTUUID POWERPAL_CHARACTERISTIC_LED_SENSITIVITY_UUID =
 static const espbt::ESPBTUUID POWERPAL_BATTERY_SERVICE_UUID = espbt::ESPBTUUID::from_uint16(0x180F);
 static const espbt::ESPBTUUID POWERPAL_BATTERY_CHARACTERISTIC_UUID = espbt::ESPBTUUID::from_uint16(0x2A19);
 
+class Powerpal;
+
+// Feeds every advertisement the BLE scanner hears into the stall diagnostics. A separate
+// object rather than a second base class of Powerpal: BLEClientNode and the scanner's
+// listener both have a member named parent_, which would make every this->parent_ ambiguous.
+class PowerpalAdvertisementWatcher : public espbt::ESPBTDeviceListener {
+ public:
+  explicit PowerpalAdvertisementWatcher(Powerpal *powerpal) : powerpal_(powerpal) {}
+  bool parse_device(const espbt::ESPBTDevice &device) override;
+
+ protected:
+  Powerpal *powerpal_;
+};
+
+// Why a lost link isn't coming back, captured at the moment the watchdog gives up. The field
+// history (flatlines lasting hours, ended instantly by a restart) says the ESP32 side can get
+// stuck; these say where. Persisted to NVS as one blob: any layout change must bump the
+// version, and a blob from an older layout is then just not shown.
+struct PowerpalLinkSnapshot {
+  uint8_t version;
+  uint8_t client_state;          // espbt::ClientState
+  uint16_t client_state_for_s;
+  uint8_t scanner_state;         // espbt::ScannerState, 0xFF if there's no tracker
+  uint8_t failed_connects;       // since the last reading
+  uint8_t last_connect_status;   // esp_gatt_status_t of the most recent failure
+  uint8_t disconnects;           // since the last reading
+  uint16_t last_disconnect_reason;  // esp_gatt_conn_reason_t
+  uint16_t ads_any;              // from any device, since the later of the last reading/drop
+  uint16_t ads_any_age_s;        // 0xFFFF: none heard
+  uint16_t ads_powerpal;
+  uint16_t ads_powerpal_age_s;   // 0xFFFF: none heard
+};
+static constexpr uint8_t POWERPAL_LINK_SNAPSHOT_VERSION = 1;
+
 
 class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   // class Powerpal : public esphome::ble_client::BLEClientNode, public PollingComponent {
  public:
   void setup() override;
-  // void loop() override;
+  void loop() override;
   void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                            esp_ble_gattc_cb_param_t *param) override;
   void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) override;
@@ -93,6 +127,9 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   // having to dig them out of the logs.
   std::string get_apikey() { return powerpal_apikey_; }
   std::string get_device_id() { return powerpal_device_id_; }
+  // Only registered with the scanner when the watchdog is enabled; see sensor.py.
+  espbt::ESPBTDeviceListener *get_advertisement_watcher() { return &this->advertisement_watcher_; }
+  void note_advertisement(uint64_t address);
 
  protected:
   // Persisted daily pulses:
@@ -169,9 +206,28 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void report_watchdog_diagnostics_();
   static std::string describe_watchdog_flags_(uint8_t flags);
   uint8_t current_watchdog_flags_();
-  // probe_recorded is false for events persisted by firmware that predates the probe.
+  // probe_recorded is false for events persisted by firmware that predates the probe; link
+  // is null for events that predate the link snapshot.
   static std::string describe_stall_(uint8_t flags, bool probe_recorded, uint8_t probe_result, uint16_t cccd_value,
-                                     bool rssi_ok, int8_t rssi, uint8_t connects);
+                                     bool rssi_ok, int8_t rssi, uint8_t connects,
+                                     const PowerpalLinkSnapshot *link);
+  static std::string describe_link_(const PowerpalLinkSnapshot &link);
+
+  PowerpalAdvertisementWatcher advertisement_watcher_{this};
+  PowerpalLinkSnapshot capture_link_snapshot_();
+  void track_client_state_();
+  void reset_advertisement_counts_();
+  uint16_t ads_any_{0};
+  uint16_t ads_powerpal_{0};
+  uint32_t last_ad_any_ms_{0};
+  uint32_t last_ad_powerpal_ms_{0};
+  uint8_t failed_connects_{0};
+  uint8_t last_connect_status_{0};
+  uint8_t disconnects_{0};
+  uint16_t last_disconnect_reason_{0};
+  uint8_t observed_client_state_{0xFF};
+  uint32_t observed_client_state_since_ms_{0};
+  PowerpalLinkSnapshot probe_link_{};  // captured when the probe fired, for the "resumed" log
 
   // Stall probe. "Connected and authenticated, but no notifications" is the most common
   // watchdog reason in the field, and the flags alone can't say *why*: the Powerpal may
