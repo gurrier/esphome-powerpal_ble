@@ -50,6 +50,7 @@ CONF_VERSION = "version"
 CONF_STALE_RESTART_AFTER = "stale_restart_after"
 CONF_WATCHDOG_RESTART_COUNT = "watchdog_restart_count"
 CONF_WATCHDOG_LAST_REASON = "watchdog_last_reason"
+CONF_LAST_STALL = "last_stall"
 
 
 def _component_version():
@@ -202,6 +203,12 @@ CONFIG_SCHEMA = cv.All(
                 icon="mdi:restart-alert",
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
+            # A stall that recovered on its own before the watchdog restarted anything. Fed
+            # by the watchdog's stall probe, so it only ever updates with stale_restart_after set.
+            cv.Optional(CONF_LAST_STALL): text_sensor.text_sensor_schema(
+                icon="mdi:timer-alert-outline",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
             cv.Optional(CONF_COST_PER_KWH): cv.float_range(min=0),
             cv.Optional(
                 CONF_POWERPAL_DEVICE_ID
@@ -289,6 +296,10 @@ async def to_code(config):
     if CONF_WATCHDOG_LAST_REASON in config:
         sens = await text_sensor.new_text_sensor(config[CONF_WATCHDOG_LAST_REASON])
         cg.add(var.set_watchdog_last_reason_sensor(sens))
+
+    if CONF_LAST_STALL in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_LAST_STALL])
+        cg.add(var.set_last_stall_sensor(sens))
 
     if CONF_COST_PER_KWH in config:
         cg.add(var.set_energy_cost(config[CONF_COST_PER_KWH]))

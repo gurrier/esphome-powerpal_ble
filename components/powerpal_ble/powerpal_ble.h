@@ -123,6 +123,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void set_stale_restart_after(uint32_t seconds) { stale_restart_after_s_ = seconds; }
   void set_watchdog_restart_count_sensor(sensor::Sensor *s) { watchdog_restart_count_sensor_ = s; }
   void set_watchdog_last_reason_sensor(text_sensor::TextSensor *s) { watchdog_last_reason_sensor_ = s; }
+  void set_last_stall_sensor(text_sensor::TextSensor *s) { last_stall_sensor_ = s; }
   // Lets a lambda (e.g. a button press) surface these into a text_sensor, without
   // having to dig them out of the logs.
   std::string get_apikey() { return powerpal_apikey_; }
@@ -212,6 +213,12 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
                                      bool rssi_ok, int8_t rssi, uint8_t connects,
                                      const PowerpalLinkSnapshot *link);
   static std::string describe_link_(const PowerpalLinkSnapshot &link);
+  static void fit_ha_state_(std::string &state);
+
+  // A probed stall that ended on its own. Its diagnosis would otherwise only reach the live
+  // log, and with a long stale_restart_after these are most of the stalls there are.
+  text_sensor::TextSensor *last_stall_sensor_{nullptr};
+  void record_recovered_stall_(uint32_t gap_s);
 
   PowerpalAdvertisementWatcher advertisement_watcher_{this};
   PowerpalLinkSnapshot capture_link_snapshot_();

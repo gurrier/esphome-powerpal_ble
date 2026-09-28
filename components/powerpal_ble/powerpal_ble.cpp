@@ -30,6 +30,7 @@ void Powerpal::dump_config() {
   ESP_LOGCONFIG(TAG, "  Component version: %s", this->version_.c_str());
   LOG_SENSOR(" ", "Watchdog Restart Count", this->watchdog_restart_count_sensor_);
   LOG_TEXT_SENSOR(" ", "Watchdog Last Reason", this->watchdog_last_reason_sensor_);
+  LOG_TEXT_SENSOR(" ", "Last Stall", this->last_stall_sensor_);
   if (this->stale_restart_after_s_ > 0) {
     ESP_LOGCONFIG(TAG, "  Stale-measurement watchdog: restart after %us without a reading",
                   static_cast<unsigned>(this->stale_restart_after_s_));
@@ -153,6 +154,18 @@ void Powerpal::setup() {
   this->reset_connection_state_();
 
   this->report_watchdog_diagnostics_();
+  // Republished on every boot for the same reason as the watchdog sensors: otherwise a
+  // restart would blank it until the next stall, which reads like there never was one.
+  if (this->nvs_ok_ && this->last_stall_sensor_ != nullptr) {
+    size_t len = 0;
+    if (nvs_get_str(this->nvs_handle_, "last_stall", nullptr, &len) == ESP_OK && len > 1) {
+      std::string last(len, '\0');
+      if (nvs_get_str(this->nvs_handle_, "last_stall", &last[0], &len) == ESP_OK) {
+        last.resize(len - 1);  // len counts the terminator
+        this->last_stall_sensor_->publish_state(last);
+      }
+    }
+  }
   if (this->stale_restart_after_s_ > 0) {
     this->set_interval(30000, [this]() { this->check_stale_watchdog_(); });
   } else {
@@ -456,12 +469,39 @@ std::string Powerpal::describe_stall_(uint8_t flags, bool probe_recorded, uint8_
     if (connected)
       reason += (flags & 0x80) ? ", re-subscribe confirmed" : ", re-subscribe NOT confirmed";
   }
-  // Home Assistant rejects a state longer than 255 characters.
-  if (reason.size() > 255) {
-    reason.resize(252);
-    reason += "...";
-  }
+  fit_ha_state_(reason);
   return reason;
+}
+
+void Powerpal::fit_ha_state_(std::string &state) {
+  // Home Assistant rejects a state longer than 255 characters.
+  if (state.size() > 255) {
+    state.resize(252);
+    state += "...";
+  }
+}
+
+void Powerpal::record_recovered_stall_(uint32_t gap_s) {
+  char buf[48];
+  if (gap_s >= 60) {
+    snprintf(buf, sizeof(buf), "resumed after %um%02us without a restart: ", static_cast<unsigned>(gap_s / 60),
+             static_cast<unsigned>(gap_s % 60));
+  } else {
+    snprintf(buf, sizeof(buf), "resumed after %us without a restart: ", static_cast<unsigned>(gap_s));
+  }
+  std::string summary = buf;
+  summary += describe_stall_(this->probe_flags_, true, this->probe_cccd_result_, this->probe_cccd_value_,
+                             this->probe_rssi_ok_, this->probe_rssi_, this->connects_since_measurement_,
+                             &this->probe_link_);
+  fit_ha_state_(summary);
+  ESP_LOGW(TAG, "Measurements %s", summary.c_str());
+
+  if (this->last_stall_sensor_ != nullptr)
+    this->last_stall_sensor_->publish_state(summary);
+  if (this->nvs_ok_) {
+    nvs_set_str(this->nvs_handle_, "last_stall", summary.c_str());
+    nvs_commit(this->nvs_handle_);
+  }
 }
 
 void Powerpal::report_watchdog_diagnostics_() {
@@ -573,15 +613,8 @@ void Powerpal::remember_measurement_(uint32_t timestamp, uint16_t pulses) {
 void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   // A stall that recovers between the probe and the restart threshold is still a data
   // point about what state the link was in.
-  if (this->probe_sent_) {
-    uint32_t gap_s = (millis() - this->last_measurement_millis_) / 1000;
-    ESP_LOGW(TAG, "Measurements resumed after %us without a restart; during the stall: %s",
-             static_cast<unsigned>(gap_s),
-             describe_stall_(this->probe_flags_, true, this->probe_cccd_result_, this->probe_cccd_value_,
-                             this->probe_rssi_ok_, this->probe_rssi_, this->connects_since_measurement_,
-                             &this->probe_link_)
-                 .c_str());
-  }
+  if (this->probe_sent_)
+    this->record_recovered_stall_((millis() - this->last_measurement_millis_) / 1000);
   this->reset_probe_state_();
   this->connects_since_measurement_ = 0;
   this->failed_connects_ = 0;
