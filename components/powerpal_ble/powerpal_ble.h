@@ -278,6 +278,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
            this->advertisement_rate_sensor_ != nullptr;
   }
   uint32_t link_quality_last_sample_ms_{0};
+  bool link_rssi_pending_{false};  // a read was sent and hasn't been answered yet
   uint16_t ads_powerpal_window_{0};  // Powerpal advertisements since the last sample
   int8_t last_ad_rssi_{0};
   bool have_ad_rssi_{false};

@@ -226,23 +226,44 @@ void Powerpal::sample_link_quality_() {
   uint32_t elapsed_ms = now - this->link_quality_last_sample_ms_;
   this->link_quality_last_sample_ms_ = now;
 
-  // Advertisements are the only measure left when the link is down, which is exactly when
-  // the connection RSSI below can't be read -- between them something is always reported.
+  // Zero is a measurement, not a missing one: it says the Powerpal was silent for a whole
+  // minute, which is the single most useful fact about a stall.
   if (this->advertisement_rate_sensor_ != nullptr && elapsed_ms > 0)
     this->advertisement_rate_sensor_->publish_state(this->ads_powerpal_window_ * 60000.0f / elapsed_ms);
-  // Held at its last value when nothing was heard this interval, rather than published as
-  // unknown: the rate above already says whether the Powerpal is on air.
-  if (this->advertisement_rssi_sensor_ != nullptr && this->have_ad_rssi_)
-    this->advertisement_rssi_sensor_->publish_state(this->last_ad_rssi_);
+  // Nothing heard means there is no reading, so publish unknown rather than leave the last
+  // one standing: a stale value would draw an unbroken line straight through a stall.
+  if (this->advertisement_rssi_sensor_ != nullptr) {
+    if (this->have_ad_rssi_) {
+      this->advertisement_rssi_sensor_->publish_state(this->last_ad_rssi_);
+    } else {
+      this->advertisement_rssi_sensor_->publish_state(NAN);
+    }
+  }
   this->ads_powerpal_window_ = 0;
   this->have_ad_rssi_ = false;
 
-  if (this->link_rssi_sensor_ == nullptr || this->parent_ == nullptr || !this->parent_->connected())
+  if (this->link_rssi_sensor_ == nullptr)
     return;
-  // Answered asynchronously, in gap_event_handler().
-  esp_err_t err = esp_ble_gap_read_rssi(this->parent_->get_remote_bda());
-  if (err != ESP_OK)
-    ESP_LOGD(TAG, "Link RSSI read request failed (%d)", err);
+  // Same again, and for the same reason: RSSI measures a connection, so without one there
+  // is no value to report. Three ways to end up with nothing -- no link, the stack refusing
+  // the read, or (tracked by link_rssi_pending_) a link that claims to be up but never
+  // answers -- and all three publish unknown.
+  bool report_unknown = this->link_rssi_pending_;
+  this->link_rssi_pending_ = false;
+  if (this->parent_ != nullptr && this->parent_->connected()) {
+    // Answered asynchronously, in gap_event_handler().
+    esp_err_t err = esp_ble_gap_read_rssi(this->parent_->get_remote_bda());
+    if (err == ESP_OK) {
+      this->link_rssi_pending_ = true;
+    } else {
+      ESP_LOGD(TAG, "Link RSSI read request failed (%d)", err);
+      report_unknown = true;
+    }
+  } else {
+    report_unknown = true;
+  }
+  if (report_unknown)
+    this->link_rssi_sensor_->publish_state(NAN);
 }
 
 void Powerpal::probe_stalled_link_(uint32_t stale_for_s) {
@@ -1276,7 +1297,10 @@ void Powerpal::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_pa
       // Also fires for anyone else's RSSI read (e.g. a ble_client rssi sensor on this link).
       if (!this->parent_->check_addr(param->read_rssi_cmpl.remote_addr))
         break;
+      this->link_rssi_pending_ = false;
       if (param->read_rssi_cmpl.status != ESP_BT_STATUS_SUCCESS) {
+        if (this->link_rssi_sensor_ != nullptr)
+          this->link_rssi_sensor_->publish_state(NAN);
         if (this->probe_sent_) {
           ESP_LOGW(TAG, "[%s] Stall probe: RSSI read failed, status=%d", this->parent_->address_str(),
                    param->read_rssi_cmpl.status);
