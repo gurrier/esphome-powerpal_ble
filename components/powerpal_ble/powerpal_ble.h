@@ -179,6 +179,15 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   std::string uuid_to_device_id_(const uint8_t *data, uint16_t length);
   std::string serial_to_apikey_(const uint8_t *data, uint16_t length);
 
+  // One name shared by every timeout that leads back to request_subscription_: ESPHome
+  // replaces a named timeout instead of running a second one beside it.
+  static constexpr const char *SUBSCRIBE_RETRY_TIMEOUT = "subscribe-retry";
+  // A wait this long means the link is up but useless, which deserves a warning rather than
+  // a debug line.
+  static constexpr uint32_t SUBSCRIBE_WAIT_WARN_MS = 10000;
+  uint32_t subscribe_wait_started_ms_{0};
+  bool subscribe_wait_warned_{false};
+
   void request_subscription_(const char *trigger_reason);
   void reset_connection_state_();
 

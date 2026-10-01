@@ -38,6 +38,13 @@ void Powerpal::dump_config() {
 }
 
 void Powerpal::reset_connection_state_() {
+  // Without this the timeout outlives the flag below: the orphan keeps calling
+  // request_subscription_() while the next connection, seeing the flag clear, schedules a
+  // chain of its own. Seen in the field as the retry log running at twice the rate one
+  // chain can produce.
+  this->cancel_timeout(SUBSCRIBE_RETRY_TIMEOUT);
+  this->subscribe_wait_started_ms_ = 0;
+  this->subscribe_wait_warned_ = false;
   this->authenticated_ = false;
   this->pending_subscription_ = false;
   this->subscription_in_progress_ = false;
@@ -73,7 +80,7 @@ void Powerpal::on_connect() {
   this->subscription_retry_scheduled_ = false;
   this->authenticated_ = false;
 
-  this->set_timeout(1000, [this]() { this->request_subscription_("post-connect"); });
+  this->set_timeout(SUBSCRIBE_RETRY_TIMEOUT, 1000, [this]() { this->request_subscription_("post-connect"); });
 }
 
 void Powerpal::on_disconnect() {
@@ -891,16 +898,39 @@ void Powerpal::request_subscription_(const char *trigger_reason) {
   }
 
   if (this->pairing_code_char_handle_ == 0 || this->reading_batch_size_char_handle_ == 0 || this->measurement_char_handle_ == 0) {
-    ESP_LOGD(TAG, "[%s] GATT handles not ready, waiting to subscribe (%s)", this->parent_->address_str(), trigger_reason);
+    uint32_t waiting_ms = 0;
+    if (this->subscribe_wait_started_ms_ == 0) {
+      this->subscribe_wait_started_ms_ = millis();
+    } else {
+      waiting_ms = millis() - this->subscribe_wait_started_ms_;
+    }
+    // Connected and authenticated but never subscribed is one of the stall signatures, and a
+    // debug line only exists for whoever happens to be watching the log at the time.
+    if (waiting_ms >= SUBSCRIBE_WAIT_WARN_MS && !this->subscribe_wait_warned_) {
+      this->subscribe_wait_warned_ = true;
+      ESP_LOGW(TAG, "[%s] Connected %us ago but service discovery still hasn't produced the GATT "
+                    "handles; nothing can be subscribed until it does",
+               this->parent_->address_str(), static_cast<unsigned>(waiting_ms / 1000));
+    } else {
+      ESP_LOGD(TAG, "[%s] GATT handles not ready, waiting to subscribe (%s)", this->parent_->address_str(),
+               trigger_reason);
+    }
     if (!this->subscription_retry_scheduled_) {
       this->subscription_retry_scheduled_ = true;
-      this->set_timeout(500, [this]() {
+      this->set_timeout(SUBSCRIBE_RETRY_TIMEOUT, 500, [this]() {
         this->subscription_retry_scheduled_ = false;
         this->request_subscription_("wait-handles");
       });
     }
     return;
   }
+
+  if (this->subscribe_wait_warned_) {
+    ESP_LOGW(TAG, "[%s] GATT handles arrived after %us; subscribing now", this->parent_->address_str(),
+             static_cast<unsigned>((millis() - this->subscribe_wait_started_ms_) / 1000));
+  }
+  this->subscribe_wait_started_ms_ = 0;
+  this->subscribe_wait_warned_ = false;
 
   ESP_LOGI(TAG, "[%s] Writing pairing code to resume notifications (%s)", this->parent_->address_str(), trigger_reason);
   auto status = esp_ble_gattc_write_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
@@ -910,7 +940,7 @@ void Powerpal::request_subscription_(const char *trigger_reason) {
     ESP_LOGW(TAG, "[%s] Failed to submit pairing write (%s), status=%d", this->parent_->address_str(), trigger_reason, status);
     if (!this->subscription_retry_scheduled_) {
       this->subscription_retry_scheduled_ = true;
-      this->set_timeout(2000, [this]() {
+      this->set_timeout(SUBSCRIBE_RETRY_TIMEOUT, 2000, [this]() {
         this->subscription_retry_scheduled_ = false;
         this->request_subscription_("retry");
       });
@@ -1112,7 +1142,7 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
             this->waiting_for_ble_auth_ = true;
           } else if (!this->subscription_retry_scheduled_) {
             this->subscription_retry_scheduled_ = true;
-            this->set_timeout(2000, [this]() {
+            this->set_timeout(SUBSCRIBE_RETRY_TIMEOUT, 2000, [this]() {
               this->subscription_retry_scheduled_ = false;
               this->request_subscription_("retry-after-fail");
             });
