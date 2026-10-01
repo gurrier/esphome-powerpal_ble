@@ -21,6 +21,8 @@ from esphome.const import (
     UNIT_KILOWATT_HOURS,
     UNIT_WATT,
     UNIT_PERCENT,
+    UNIT_DECIBEL_MILLIWATT,
+    DEVICE_CLASS_SIGNAL_STRENGTH,
     CONF_TIME_ID,
 )
 
@@ -51,6 +53,9 @@ CONF_STALE_RESTART_AFTER = "stale_restart_after"
 CONF_WATCHDOG_RESTART_COUNT = "watchdog_restart_count"
 CONF_WATCHDOG_LAST_REASON = "watchdog_last_reason"
 CONF_LAST_STALL = "last_stall"
+CONF_LINK_RSSI = "link_rssi"
+CONF_ADVERTISEMENT_RSSI = "advertisement_rssi"
+CONF_ADVERTISEMENT_RATE = "advertisement_rate"
 
 
 def _component_version():
@@ -209,6 +214,32 @@ CONFIG_SCHEMA = cv.All(
                 icon="mdi:timer-alert-outline",
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
+            # Link quality, sampled every minute whether or not anything is wrong. Without a
+            # baseline there is no way to tell a link that goes weak during a stall from one
+            # that is always weak; see sample_link_quality_() in powerpal_ble.cpp.
+            cv.Optional(CONF_LINK_RSSI): sensor.sensor_schema(
+                unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
+                accuracy_decimals=0,
+                device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
+                state_class=STATE_CLASS_MEASUREMENT,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            # The connection's RSSI can only be read while there is a connection. These two
+            # come from the scanner instead, so they keep reporting through a stall.
+            cv.Optional(CONF_ADVERTISEMENT_RSSI): sensor.sensor_schema(
+                unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
+                accuracy_decimals=0,
+                device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
+                state_class=STATE_CLASS_MEASUREMENT,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_ADVERTISEMENT_RATE): sensor.sensor_schema(
+                unit_of_measurement="ads/min",
+                accuracy_decimals=1,
+                state_class=STATE_CLASS_MEASUREMENT,
+                icon="mdi:bluetooth-audio",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
             cv.Optional(CONF_COST_PER_KWH): cv.float_range(min=0),
             cv.Optional(
                 CONF_POWERPAL_DEVICE_ID
@@ -285,9 +316,24 @@ async def to_code(config):
 
     if CONF_STALE_RESTART_AFTER in config:
         cg.add(var.set_stale_restart_after(config[CONF_STALE_RESTART_AFTER]))
-        # Lets the watchdog's diagnostics tell a silent Powerpal from a stalled scanner.
-        # Only with the watchdog on, since it sees every advertisement in range.
+
+    # Lets the watchdog's diagnostics tell a silent Powerpal from a stalled scanner, and
+    # feeds the advertisement sensors. Registered only when something needs it, since the
+    # watcher then sees every advertisement in range.
+    if any(
+        key in config
+        for key in (CONF_STALE_RESTART_AFTER, CONF_ADVERTISEMENT_RSSI, CONF_ADVERTISEMENT_RATE)
+    ):
         await esp32_ble_tracker.register_ble_device(var.get_advertisement_watcher(), config)
+
+    for key, setter in (
+        (CONF_LINK_RSSI, var.set_link_rssi_sensor),
+        (CONF_ADVERTISEMENT_RSSI, var.set_advertisement_rssi_sensor),
+        (CONF_ADVERTISEMENT_RATE, var.set_advertisement_rate_sensor),
+    ):
+        if key in config:
+            sens = await sensor.new_sensor(config[key])
+            cg.add(setter(sens))
 
     if CONF_WATCHDOG_RESTART_COUNT in config:
         sens = await sensor.new_sensor(config[CONF_WATCHDOG_RESTART_COUNT])

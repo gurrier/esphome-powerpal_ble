@@ -124,13 +124,16 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   void set_watchdog_restart_count_sensor(sensor::Sensor *s) { watchdog_restart_count_sensor_ = s; }
   void set_watchdog_last_reason_sensor(text_sensor::TextSensor *s) { watchdog_last_reason_sensor_ = s; }
   void set_last_stall_sensor(text_sensor::TextSensor *s) { last_stall_sensor_ = s; }
+  void set_link_rssi_sensor(sensor::Sensor *s) { link_rssi_sensor_ = s; }
+  void set_advertisement_rssi_sensor(sensor::Sensor *s) { advertisement_rssi_sensor_ = s; }
+  void set_advertisement_rate_sensor(sensor::Sensor *s) { advertisement_rate_sensor_ = s; }
   // Lets a lambda (e.g. a button press) surface these into a text_sensor, without
   // having to dig them out of the logs.
   std::string get_apikey() { return powerpal_apikey_; }
   std::string get_device_id() { return powerpal_device_id_; }
   // Only registered with the scanner when the watchdog is enabled; see sensor.py.
   espbt::ESPBTDeviceListener *get_advertisement_watcher() { return &this->advertisement_watcher_; }
-  void note_advertisement(uint64_t address);
+  void note_advertisement(uint64_t address, int rssi);
 
  protected:
   // Persisted daily pulses:
@@ -260,6 +263,24 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   uint16_t probe_cccd_value_{0};
   bool probe_rssi_ok_{false};
   int8_t probe_rssi_{0};
+
+  // Link quality, sampled on a fixed interval whether or not anything is wrong. The stall
+  // probe only reads RSSI once a stall is already underway, which says nothing about what
+  // the link looks like the rest of the time -- and without that baseline a weak reading
+  // during a stall can't be told from a link that is always weak.
+  static constexpr uint32_t LINK_QUALITY_INTERVAL_MS = 60000;
+  sensor::Sensor *link_rssi_sensor_{nullptr};
+  sensor::Sensor *advertisement_rssi_sensor_{nullptr};
+  sensor::Sensor *advertisement_rate_sensor_{nullptr};
+  void sample_link_quality_();
+  bool link_quality_enabled_() const {
+    return this->link_rssi_sensor_ != nullptr || this->advertisement_rssi_sensor_ != nullptr ||
+           this->advertisement_rate_sensor_ != nullptr;
+  }
+  uint32_t link_quality_last_sample_ms_{0};
+  uint16_t ads_powerpal_window_{0};  // Powerpal advertisements since the last sample
+  int8_t last_ad_rssi_{0};
+  bool have_ad_rssi_{false};
 
   uint16_t measurement_cccd_handle_{0};
   // Whether this connection's CCCD write (done by ESPHome after register_for_notify) was

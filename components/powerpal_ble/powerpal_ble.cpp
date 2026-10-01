@@ -171,6 +171,10 @@ void Powerpal::setup() {
   } else {
     this->disable_loop();  // loop() only feeds the watchdog's diagnostics
   }
+  if (this->link_quality_enabled_()) {
+    this->link_quality_last_sample_ms_ = millis();
+    this->set_interval(LINK_QUALITY_INTERVAL_MS, [this]() { this->sample_link_quality_(); });
+  }
 }
 
 void Powerpal::loop() {
@@ -217,6 +221,30 @@ void Powerpal::flush_energy_counters_() {
   this->last_pulses_for_threshold_ = this->total_pulses_;
 }
 
+void Powerpal::sample_link_quality_() {
+  uint32_t now = millis();
+  uint32_t elapsed_ms = now - this->link_quality_last_sample_ms_;
+  this->link_quality_last_sample_ms_ = now;
+
+  // Advertisements are the only measure left when the link is down, which is exactly when
+  // the connection RSSI below can't be read -- between them something is always reported.
+  if (this->advertisement_rate_sensor_ != nullptr && elapsed_ms > 0)
+    this->advertisement_rate_sensor_->publish_state(this->ads_powerpal_window_ * 60000.0f / elapsed_ms);
+  // Held at its last value when nothing was heard this interval, rather than published as
+  // unknown: the rate above already says whether the Powerpal is on air.
+  if (this->advertisement_rssi_sensor_ != nullptr && this->have_ad_rssi_)
+    this->advertisement_rssi_sensor_->publish_state(this->last_ad_rssi_);
+  this->ads_powerpal_window_ = 0;
+  this->have_ad_rssi_ = false;
+
+  if (this->link_rssi_sensor_ == nullptr || this->parent_ == nullptr || !this->parent_->connected())
+    return;
+  // Answered asynchronously, in gap_event_handler().
+  esp_err_t err = esp_ble_gap_read_rssi(this->parent_->get_remote_bda());
+  if (err != ESP_OK)
+    ESP_LOGD(TAG, "Link RSSI read request failed (%d)", err);
+}
+
 void Powerpal::probe_stalled_link_(uint32_t stale_for_s) {
   this->probe_sent_ = true;
   this->probe_flags_ = this->current_watchdog_flags_();
@@ -246,11 +274,11 @@ void Powerpal::probe_stalled_link_(uint32_t stale_for_s) {
 }
 
 bool PowerpalAdvertisementWatcher::parse_device(const espbt::ESPBTDevice &device) {
-  this->powerpal_->note_advertisement(device.address_uint64());
+  this->powerpal_->note_advertisement(device.address_uint64(), device.get_rssi());
   return false;  // purely an observer: never claim a device on anyone else's behalf
 }
 
-void Powerpal::note_advertisement(uint64_t address) {
+void Powerpal::note_advertisement(uint64_t address, int rssi) {
   uint32_t now = millis();
   if (this->ads_any_ < UINT16_MAX)
     this->ads_any_++;
@@ -259,6 +287,10 @@ void Powerpal::note_advertisement(uint64_t address) {
     if (this->ads_powerpal_ < UINT16_MAX)
       this->ads_powerpal_++;
     this->last_ad_powerpal_ms_ = now;
+    if (this->ads_powerpal_window_ < UINT16_MAX)
+      this->ads_powerpal_window_++;
+    this->last_ad_rssi_ = static_cast<int8_t>(rssi);
+    this->have_ad_rssi_ = true;
   }
 }
 
@@ -1242,15 +1274,25 @@ void Powerpal::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_pa
     }
     case ESP_GAP_BLE_READ_RSSI_COMPLETE_EVT: {
       // Also fires for anyone else's RSSI read (e.g. a ble_client rssi sensor on this link).
-      if (!this->probe_sent_ || !this->parent_->check_addr(param->read_rssi_cmpl.remote_addr))
+      if (!this->parent_->check_addr(param->read_rssi_cmpl.remote_addr))
         break;
-      if (param->read_rssi_cmpl.status == ESP_BT_STATUS_SUCCESS) {
+      if (param->read_rssi_cmpl.status != ESP_BT_STATUS_SUCCESS) {
+        if (this->probe_sent_) {
+          ESP_LOGW(TAG, "[%s] Stall probe: RSSI read failed, status=%d", this->parent_->address_str(),
+                   param->read_rssi_cmpl.status);
+        } else {
+          ESP_LOGD(TAG, "[%s] Link RSSI read failed, status=%d", this->parent_->address_str(),
+                   param->read_rssi_cmpl.status);
+        }
+        break;
+      }
+      int8_t rssi = param->read_rssi_cmpl.rssi;
+      if (this->link_rssi_sensor_ != nullptr)
+        this->link_rssi_sensor_->publish_state(rssi);
+      if (this->probe_sent_) {
         this->probe_rssi_ok_ = true;
-        this->probe_rssi_ = param->read_rssi_cmpl.rssi;
-        ESP_LOGW(TAG, "[%s] Stall probe: link RSSI %d dBm", this->parent_->address_str(), this->probe_rssi_);
-      } else {
-        ESP_LOGW(TAG, "[%s] Stall probe: RSSI read failed, status=%d", this->parent_->address_str(),
-                 param->read_rssi_cmpl.status);
+        this->probe_rssi_ = rssi;
+        ESP_LOGW(TAG, "[%s] Stall probe: link RSSI %d dBm", this->parent_->address_str(), rssi);
       }
       break;
     }
