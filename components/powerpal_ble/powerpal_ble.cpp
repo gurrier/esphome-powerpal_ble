@@ -359,6 +359,7 @@ PowerpalLinkSnapshot Powerpal::capture_link_snapshot_() {
   s.last_connect_status = this->last_connect_status_;
   s.disconnects = this->disconnects_;
   s.last_disconnect_reason = this->last_disconnect_reason_;
+  s.first_disconnect_reason = this->first_disconnect_reason_;
   s.ads_any = this->ads_any_;
   s.ads_any_age_s = age_s(this->ads_any_, this->last_ad_any_ms_);
   s.ads_powerpal = this->ads_powerpal_;
@@ -368,36 +369,41 @@ PowerpalLinkSnapshot Powerpal::capture_link_snapshot_() {
 
 std::string Powerpal::describe_link_(const PowerpalLinkSnapshot &link) {
   static const char *const SCANNER_STATES[] = {"IDLE", "STARTING", "RUNNING", "FAILED", "STOPPING", "STOPPED"};
-  char buf[96];
-  std::string out = "BLE client ";
+  // Kept terse: this ends up inside a Home Assistant state, capped at 255 characters, and the
+  // first field-recorded stall lost its tail to that cap.
+  char buf[80];
+  std::string out = "client ";
   out += espbt::client_state_to_string(static_cast<espbt::ClientState>(link.client_state));
   if (link.client_state != static_cast<uint8_t>(espbt::ClientState::IDLE)) {
     snprintf(buf, sizeof(buf), " for %us", link.client_state_for_s);
     out += buf;
   }
-  out += "; scanner ";
-  out += link.scanner_state < 6 ? SCANNER_STATES[link.scanner_state] : "unknown";
+  if (link.scanner_state != static_cast<uint8_t>(espbt::ScannerState::RUNNING)) {
+    out += "; scanner ";
+    out += link.scanner_state < 6 ? SCANNER_STATES[link.scanner_state] : "unknown";
+  }
 
-  if (link.ads_powerpal == 0) {
-    out += "; Powerpal not heard";
+  if (link.ads_powerpal > 0) {
+    snprintf(buf, sizeof(buf), "; Powerpal ads %u (last %us ago)", link.ads_powerpal, link.ads_powerpal_age_s);
+  } else if (link.ads_any > 0) {
+    // Only worth the space when the Powerpal wasn't heard: it shows the scanner was alive.
+    snprintf(buf, sizeof(buf), "; no Powerpal ads (others %u, last %us ago)", link.ads_any, link.ads_any_age_s);
   } else {
-    snprintf(buf, sizeof(buf), "; Powerpal heard %ux, last %us ago", link.ads_powerpal, link.ads_powerpal_age_s);
-    out += buf;
+    snprintf(buf, sizeof(buf), "; no ads heard at all");
   }
-  if (link.ads_any == 0) {
-    out += ", nothing else either";
-  } else {
-    snprintf(buf, sizeof(buf), " (all devices: %u, last %us ago)", link.ads_any, link.ads_any_age_s);
-    out += buf;
-  }
+  out += buf;
 
   if (link.failed_connects > 0) {
-    snprintf(buf, sizeof(buf), "; %u failed connect%s, last status %u", link.failed_connects,
-             link.failed_connects == 1 ? "" : "s", link.last_connect_status);
+    snprintf(buf, sizeof(buf), "; %u failed connect%s (%sstatus %u)", link.failed_connects,
+             link.failed_connects == 1 ? "" : "s", link.failed_connects == 1 ? "" : "last ", link.last_connect_status);
     out += buf;
   }
-  if (link.disconnects > 0) {
-    snprintf(buf, sizeof(buf), "; dropped with reason 0x%02x", link.last_disconnect_reason);
+  if (link.disconnects == 1) {
+    snprintf(buf, sizeof(buf), "; dropped (0x%02x)", link.first_disconnect_reason);
+    out += buf;
+  } else if (link.disconnects > 1) {
+    snprintf(buf, sizeof(buf), "; dropped %ux (first 0x%02x, last 0x%02x)", link.disconnects,
+             link.first_disconnect_reason, link.last_disconnect_reason);
     out += buf;
   }
   return out;
@@ -488,25 +494,23 @@ std::string Powerpal::describe_stall_(uint8_t flags, bool probe_recorded, uint8_
   switch (probe_result) {
     case PROBE_READ_OK:
       if (cccd_value == 0x0001) {
-        reason = "connected and subscribed (Powerpal confirmed notifications on), but it stopped sending";
+        reason = "connected, notifications on, but the Powerpal stopped sending";
       } else if (cccd_value == 0x0000) {
-        reason = "connected, but the Powerpal had turned our notifications off (subscription lost)";
+        reason = "connected, but our notifications were off (subscription lost)";
       } else {
-        snprintf(buf, sizeof(buf), "connected, but the Powerpal reported an unexpected subscription value 0x%04x",
-                 cccd_value);
+        snprintf(buf, sizeof(buf), "connected, unexpected subscription value 0x%04x", cccd_value);
         reason = buf;
       }
       break;
     case PROBE_READ_FAILED:
-      snprintf(buf, sizeof(buf), "connected, but the Powerpal rejected a subscription check (GATT error %u)",
-               cccd_value);
+      snprintf(buf, sizeof(buf), "connected, subscription check rejected (GATT error %u)", cccd_value);
       reason = buf;
       break;
     case PROBE_NO_REPLY:
-      reason = "reported connected, but the Powerpal never answered a subscription check (link likely dead)";
+      reason = "reported connected, but no reply to a subscription check (link likely dead)";
       break;
     case PROBE_SUBMIT_FAILED:
-      reason = "reported connected, but the ESP32's BLE stack refused to send a subscription check";
+      reason = "reported connected, but the BLE stack wouldn't send a subscription check";
       break;
     default:
       break;  // PROBE_NOT_RUN: the flag-based reason is all there is
@@ -514,9 +518,9 @@ std::string Powerpal::describe_stall_(uint8_t flags, bool probe_recorded, uint8_
 
   bool connected = flags & 0x01;
   if (probe_result != PROBE_NOT_RUN && !connected)
-    reason += "; the link then dropped before the restart";
+    reason += "; then the link dropped";
   if (!connected && link != nullptr) {
-    reason = probe_result == PROBE_NOT_RUN ? std::string("not connected to the Powerpal: ") : reason + "; ";
+    reason = probe_result == PROBE_NOT_RUN ? std::string("not connected: ") : reason + "; ";
     reason += describe_link_(*link);
   }
   if (rssi_ok) {
@@ -524,10 +528,10 @@ std::string Powerpal::describe_stall_(uint8_t flags, bool probe_recorded, uint8_
     reason += buf;
   }
   if (connects > 0) {
-    snprintf(buf, sizeof(buf), "; %u BLE reconnect%s since the last reading", connects, connects == 1 ? "" : "s");
+    snprintf(buf, sizeof(buf), "; %u reconnect%s", connects, connects == 1 ? "" : "s");
     reason += buf;
     if (connected)
-      reason += (flags & 0x80) ? ", re-subscribe confirmed" : ", re-subscribe NOT confirmed";
+      reason += (flags & 0x80) ? ", resubscribe confirmed" : ", resubscribe NOT confirmed";
   }
   fit_ha_state_(reason);
   return reason;
@@ -544,10 +548,10 @@ void Powerpal::fit_ha_state_(std::string &state) {
 void Powerpal::record_recovered_stall_(uint32_t gap_s) {
   char buf[48];
   if (gap_s >= 60) {
-    snprintf(buf, sizeof(buf), "resumed after %um%02us without a restart: ", static_cast<unsigned>(gap_s / 60),
+    snprintf(buf, sizeof(buf), "resumed after %um%02us, no restart: ", static_cast<unsigned>(gap_s / 60),
              static_cast<unsigned>(gap_s % 60));
   } else {
-    snprintf(buf, sizeof(buf), "resumed after %us without a restart: ", static_cast<unsigned>(gap_s));
+    snprintf(buf, sizeof(buf), "resumed after %us, no restart: ", static_cast<unsigned>(gap_s));
   }
   std::string summary = buf;
   summary += describe_stall_(this->probe_flags_, true, this->probe_cccd_result_, this->probe_cccd_value_,
@@ -976,6 +980,8 @@ void Powerpal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
     case ESP_GATTC_DISCONNECT_EVT: {
       ESP_LOGW(TAG, "[%s] ESP_GATTC_DISCONNECT_EVT, reason=0x%02x", this->parent_->address_str(),
                param->disconnect.reason);
+      if (this->disconnects_ == 0)
+        this->first_disconnect_reason_ = static_cast<uint16_t>(param->disconnect.reason);
       if (this->disconnects_ < UINT8_MAX)
         this->disconnects_++;
       this->last_disconnect_reason_ = static_cast<uint16_t>(param->disconnect.reason);

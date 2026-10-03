@@ -76,8 +76,11 @@ struct PowerpalLinkSnapshot {
   uint16_t ads_any_age_s;        // 0xFFFF: none heard
   uint16_t ads_powerpal;
   uint16_t ads_powerpal_age_s;   // 0xFFFF: none heard
+  // The drop that started the stall. last_disconnect_reason alone gets overwritten by a
+  // failed reconnect (seen in the field as 0x100, "connection cancelled"), hiding the cause.
+  uint16_t first_disconnect_reason;
 };
-static constexpr uint8_t POWERPAL_LINK_SNAPSHOT_VERSION = 1;
+static constexpr uint8_t POWERPAL_LINK_SNAPSHOT_VERSION = 2;
 
 
 class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
@@ -244,6 +247,7 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   uint8_t last_connect_status_{0};
   uint8_t disconnects_{0};
   uint16_t last_disconnect_reason_{0};
+  uint16_t first_disconnect_reason_{0};  // only meaningful while disconnects_ > 0
   uint8_t observed_client_state_{0xFF};
   uint32_t observed_client_state_since_ms_{0};
   PowerpalLinkSnapshot probe_link_{};  // captured when the probe fired, for the "resumed" log
