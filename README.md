@@ -11,6 +11,7 @@ Collection of code, tools and documentation for data retrieval over BLE from you
 
 - [Using the ESPHome Component](#using-the-esphome-component)
 - [Useful Extras](#useful-extras)
+- [Connection Reliability and Diagnostics](#connection-reliability-and-diagnostics)
 - [BLE Documentation](#ble-documentation)
 - [Powerpal API Key and Device ID](#powerpal-api-key-and-device-id)
 
@@ -206,6 +207,95 @@ text_sensor:
 ```yaml
 wifi:
   power_save_mode: none
+```
+
+## Connection Reliability and Diagnostics
+
+If your readings sometimes stop for a while, or flatline until the ESP32 is restarted, work through this section in order. Everything here is optional, and added in 1.8.
+
+**Check the signal strength first.** The most common cause of dropouts is a Bluetooth link that's too weak. The ESP32 is simply too far from the Powerpal, or there's metal (such as a meter box) between them. These three sensors show it:
+
+```yaml
+sensor:
+  - platform: powerpal_ble
+    # ...
+    link_rssi:
+      name: "Powerpal Link RSSI"
+    advertisement_rssi:
+      name: "Powerpal Advertisement RSSI"
+    advertisement_rate:
+      name: "Powerpal Advertisement Rate"
+```
+
+- **Link RSSI** is the strength of the connection, read every minute. Aim for better than about **−75 dBm**. Around −85 or worse, expect regular dropouts; around −95 the ESP32 can barely hear the Powerpal at all. It shows unknown while there's no connection.
+- **Advertisement RSSI** and **Advertisement Rate** only report while the link is down, because the Powerpal stops advertising while it's connected. So `0 ads/min` with an unknown advertisement RSSI is normal. A non-zero rate means the link was down during that minute, which makes the rate a good drop counter.
+
+In one real setup, moving the ESP32 to the room beside the meter box took the link from about −90 to about −70 dBm, and the frequent dropouts stopped. If you can, put the ESP32 near the Powerpal, at a similar height, with the antenna end of the board pointing toward it and away from metal. Then watch Link RSSI as you adjust it. Disabling WiFi power-saving (see [Useful Extras](#useful-extras)) also helps.
+
+**Reconnect by hand without restarting the ESP32.** ESPHome's own `ble_client` switch drops and re-establishes just the Powerpal link. It's useful for testing whether a stuck connection recovers with a simple reconnect. It always comes back on after a restart:
+
+```yaml
+switch:
+  - platform: ble_client
+    ble_client_id: powerpal
+    name: "Powerpal BLE Connection"
+```
+
+**Optional self-healing watchdog.** Set `stale_restart_after` and the ESP32 restarts itself if no reading arrives for that long. Before restarting, it saves the energy counters, so no counted energy is lost. It also records what state the connection was in, and reports that on the next boot:
+
+```yaml
+sensor:
+  - platform: powerpal_ble
+    # ...
+    stale_restart_after: 15min
+    watchdog_restart_count:
+      name: "Powerpal Watchdog Restart Count"
+    watchdog_last_reason:
+      name: "Powerpal Watchdog Last Reason"
+    last_stall:
+      name: "Powerpal Last Stall"
+```
+
+- **10–15 minutes** is a sensible value. Readings arrive every minute, and short gaps often recover on their own; a very short value like 2–3 minutes mostly restarts the ESP32 for gaps that would have fixed themselves.
+- It's a safety net, not a fix. If it fires regularly, go back to Link RSSI.
+- The watchdog is off unless `stale_restart_after` is set. The 90-second check below runs inside it, so **Watchdog Last Reason** and **Last Stall** only fill in while it's on.
+
+**What the diagnostics say.** About 90 seconds into a stall, the watchdog checks the connection. **Watchdog Last Reason** shows what it found, after a restart. **Last Stall** shows the same for a stall that recovered without one, prefixed with how long the gap was. Both are kept across restarts. Common results:
+
+| Text | Meaning |
+|---|---|
+| `connected, notifications on, but the Powerpal stopped sending` | Still connected and subscribed; the Powerpal went quiet |
+| `connected, but our notifications were off (subscription lost)` | The Powerpal dropped the subscription |
+| `reported connected, but no reply to a subscription check (link likely dead)` | The ESP32 still thought it was connected, but nothing was answering |
+| `not connected: client …; Powerpal ads …; dropped (0x08)` | The link was down. Shows what the Bluetooth client was doing, whether the Powerpal could still be heard, any failed connection attempts, and why the link dropped |
+| `… RSSI -88 dBm` | Signal strength at the time. Weak values point back to placement |
+
+Disconnect reason codes: `0x08` signal lost (supervision timeout), `0x13` the Powerpal ended the connection, `0x16` the ESP32 ended it, `0x3e` the connection couldn't be established, `0x100` a connection attempt was cancelled. A failed connect with status `133` is a generic error, typical of an attempt made on a weak signal.
+
+**Get notified when the watchdog restarts the ESP32.** Add ESPHome's `debug` component with its reset reason sensor:
+
+```yaml
+debug:
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset Reason"
+```
+
+Then trigger a Home Assistant automation on that sensor changing to `Reboot request from powerpal_ble.sensor`. Only a watchdog restart produces that exact text, so OTA updates, power cuts and Home Assistant's own restarts won't notify. Adjust the entity IDs and notify action to suit:
+
+```yaml
+triggers:
+  - trigger: state
+    entity_id: sensor.powerpal_gateway_reset_reason
+    to: "Reboot request from powerpal_ble.sensor"
+actions:
+  - action: notify.mobile_app_your_phone
+    data:
+      message: >-
+        Powerpal gateway restarted itself: {{
+        states('sensor.powerpal_gateway_powerpal_watchdog_last_reason') }}
 ```
 
 ## Powerpal API Key and Device ID
