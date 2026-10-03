@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# ESPHome build output and secrets, if the example config is compiled in place
+.esphome/
+secrets.yaml
