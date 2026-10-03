@@ -301,9 +301,7 @@ actions:
 ## Powerpal API Key and Device ID
 The Powerpal Cloud API Key is stored on the Powerpal device itself at `59DA0009-12F4-25A6-7D4F-55961DCE4205`.
 The Device ID is stored at `59DA0010-12F4-25A6-7D4F-55961DCE4205`.
-It can be retrieved and decoded using:
-- [Python Authentication Retrieval Script](auth_extraction)
-- Or the [ESPHome Component](#using-the-esphome-component) will print it out after establishing a BLE connection to the Powerpal
+The [ESPHome Component](#using-the-esphome-component) prints both after establishing a BLE connection to the Powerpal, or see [Useful Extras](#useful-extras) for a button that shows them in Home Assistant.
 
 Also see [how to decode both values](#retrieving-and-decoding-cloud-api-key-and-device-id)
 
