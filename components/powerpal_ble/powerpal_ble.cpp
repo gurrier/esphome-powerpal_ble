@@ -493,7 +493,11 @@ std::string Powerpal::describe_stall_(uint8_t flags, bool probe_recorded, uint8_
   char buf[112];
   switch (probe_result) {
     case PROBE_READ_OK:
-      if (cccd_value == 0x0001) {
+      if (cccd_value == 0x0001 && connects > 0) {
+        // After a reconnect, the Powerpal's next once-a-minute reading can simply not be due
+        // yet; the probe can't tell that from a Powerpal that has gone quiet.
+        reason = "reconnected, notifications on, no reading yet";
+      } else if (cccd_value == 0x0001) {
         reason = "connected, notifications on, but the Powerpal stopped sending";
       } else if (cccd_value == 0x0000) {
         reason = "connected, but our notifications were off (subscription lost)";

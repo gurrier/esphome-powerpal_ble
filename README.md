@@ -264,7 +264,8 @@ sensor:
 
 | Text | Meaning |
 |---|---|
-| `connected, notifications on, but the Powerpal stopped sending` | Still connected and subscribed; the Powerpal went quiet |
+| `connected, notifications on, but the Powerpal stopped sending` | Still on the same connection and subscribed; the Powerpal went quiet |
+| `reconnected, notifications on, no reading yet` | The link dropped and came straight back, and was waiting for the Powerpal's next once-a-minute reading. A gap of about 2 minutes like this is normal after a brief drop |
 | `connected, but our notifications were off (subscription lost)` | The Powerpal dropped the subscription |
 | `reported connected, but no reply to a subscription check (link likely dead)` | The ESP32 still thought it was connected, but nothing was answering |
 | `not connected: client …; Powerpal ads …; dropped (0x08)` | The link was down. Shows what the Bluetooth client was doing, whether the Powerpal could still be heard, any failed connection attempts, and why the link dropped |
@@ -283,7 +284,9 @@ text_sensor:
       name: "Reset Reason"
 ```
 
-Then trigger a Home Assistant automation on that sensor changing to `Reboot request from powerpal_ble.sensor`. Only a watchdog restart produces that exact text, so OTA updates, power cuts and Home Assistant's own restarts won't notify. Adjust the entity IDs and notify action to suit:
+Then trigger a Home Assistant automation on that sensor changing to `Reboot request from powerpal_ble.sensor`. Only a watchdog restart produces that exact text, so OTA updates, power cuts and Home Assistant's own restarts won't notify.
+
+The wait step matters. After a restart the ESP32 sends all its values at once, and without the wait the automation can read the reason before Home Assistant has caught up, so the message says "unavailable". Adjust the entity IDs and notify action to suit:
 
 ```yaml
 triggers:
@@ -291,6 +294,10 @@ triggers:
     entity_id: sensor.powerpal_gateway_reset_reason
     to: "Reboot request from powerpal_ble.sensor"
 actions:
+  - wait_template: >-
+      {{ states('sensor.powerpal_gateway_powerpal_watchdog_last_reason')
+         not in ['unknown', 'unavailable'] }}
+    timeout: "00:01:00"
   - action: notify.mobile_app_your_phone
     data:
       message: >-
