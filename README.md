@@ -65,6 +65,47 @@ sensor:
 ```
 > **`main` vs. a version tag:** `ref: "main"` tracks the latest commit, which means the ESPHome Dashboard will flag an "Update available" in Home Assistant whenever new code lands — but that code hasn't necessarily been validated against real hardware yet. Pinning to a version tag (e.g. `"1.6.3"`) is the recommended default: your build only changes when you deliberately bump the tag after reading the release notes. Track `main` only if you specifically want to follow development closely and accept the occasional rough edge.
 
+#### All options
+
+**Settings**
+
+| Option | | Description |
+|---|---|---|
+| `ble_client_id` | required | The `ble_client` holding your Powerpal's MAC address |
+| `pairing_code` | required | Your Powerpal's 6-digit pairing code |
+| `notification_interval` | required, 1–60 | Minutes between readings; each reading covers the pulses since the last. `1` is recommended, and the watchdog below assumes it |
+| `pulses_per_kwh` | required | Your meter's pulse rate, usually printed on it as imp/kWh (e.g. `1000`) |
+| `id` | optional | Needed to call the component from a lambda, e.g. the API key button in [Useful Extras](#useful-extras) |
+| `time_id` | optional | A `time` component. Daily totals reset at its local midnight; without it, the Powerpal's own clock decides |
+| `cost_per_kwh` | optional | Flat rate per kWh, used by the `cost` sensor |
+| `powerpal_device_id` | optional | 8 hex digits. Read from your Powerpal if not set |
+| `powerpal_apikey` | optional | Cloud API key, in UUID form. Read from your Powerpal if not set |
+| `stale_restart_after` | optional | Restart the ESP32 if no reading arrives for this long, e.g. `15min`. See [Connection Reliability and Diagnostics](#connection-reliability-and-diagnostics) |
+
+**Sensors** (all optional; each takes the usual ESPHome sensor options such as `name`)
+
+| Option | Type | Description |
+|---|---|---|
+| `power` | sensor, W | Average power over the latest reading |
+| `energy` | sensor, kWh | Lifetime total, kept across restarts. Use this one for the Energy dashboard |
+| `daily_energy` | sensor, kWh | Total since midnight, kept across restarts |
+| `watt_hours` | sensor | Energy in the latest reading, in Wh |
+| `pulses` | sensor | Meter pulses in the latest reading |
+| `daily_pulses` | sensor | Meter pulses since midnight |
+| `cost` | sensor | Cost of the latest reading's energy, using `cost_per_kwh` |
+| `timestamp` | text sensor | Time of the latest reading from the Powerpal's own clock, as a date-time |
+| `battery_level` | sensor, % | Powerpal battery level |
+| `led_sensitivity` | sensor | The Powerpal's LED sensor sensitivity setting |
+| `version` | text sensor | This component's version |
+| `link_rssi` | sensor, dBm | Connection signal strength, read every minute |
+| `advertisement_rssi` | sensor, dBm | Powerpal signal strength while the link is down |
+| `advertisement_rate` | sensor, ads/min | How often the Powerpal advertised; non-zero means the link was down |
+| `watchdog_restart_count` | sensor | Restarts made by the watchdog |
+| `watchdog_last_reason` | text sensor | What the watchdog found before its last restart |
+| `last_stall` | text sensor | The same, for the last stall that recovered without a restart |
+
+The last six are explained in [Connection Reliability and Diagnostics](#connection-reliability-and-diagnostics).
+
 You can also find a full config here: [powerpalproesp.yaml](powerpalproesp.yaml)
 
 And the component code here: [powerpal_ble ESPHome Component](components/powerpal_ble)
