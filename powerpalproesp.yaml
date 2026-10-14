@@ -155,7 +155,7 @@ api:
 
 ota:
   - platform: esphome
-    encryption: # reuses the api encryption key above; no password needed
+    encryption: # ESPHome 2026.9.0+; reuses the api encryption key above, no password needed
 
 wifi:
   ssid: !secret wifi_ssid
@@ -163,7 +163,7 @@ wifi:
   power_save_mode: none # avoid WiFi power-saving interfering with BLE timing/reliability
   ap:
     ssid: "Powerpal Fallback Hotspot"
-    password: "XXXXXXXX" # << EDIT HERE
+    password: !secret fallback_password # at least 8 characters
 
 web_server:
   port: 80

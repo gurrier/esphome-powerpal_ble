@@ -210,7 +210,7 @@ interval:
 
 Credit to [SleepinDevil's fork](https://github.com/SleepinDevil/esphome-powerpal_ble) for this pattern.
 
-**Use encryption instead of a password for API/OTA** — ESPHome has deprecated plaintext password auth in favor of encryption keys (the password option is removed entirely as of ESPHome 2026.1.0). One API encryption key can protect both API and OTA traffic — OTA just reuses it:
+**Use encryption instead of a password for API/OTA** — ESPHome removed the API `password:` option in 2026.1.0, so the API needs an encryption key. From ESPHome 2026.9.0, OTA updates can be encrypted with the same key: a bare `encryption:` under `ota:` reuses it, and an OTA `password:` is then unnecessary (ESPHome warns if you set both). On ESPHome older than 2026.9.0, leave out `encryption:` under `ota:` and use an OTA `password:` instead:
 
 ```yaml
 api:
@@ -219,7 +219,7 @@ api:
 
 ota:
   - platform: esphome
-    encryption: # reuses the api encryption key above; no password needed
+    encryption: # ESPHome 2026.9.0+; reuses the api encryption key above, no password needed
 ```
 
 Unlike a password, encryption also keeps the firmware image itself confidential in transit, not just gate-kept.
