@@ -335,7 +335,9 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
 #ifdef USE_TIME
   optional<time::RealTimeClock *> time_{};
 #endif
-  uint16_t day_of_last_measurement_{0};
+  // The day daily_pulses_ belongs to, as year * 1000 + day of year; 0 until known. Persisted
+  // with the daily total, so a restart that spans midnight still starts a new day.
+  uint32_t daily_day_{0};
   uint32_t last_measurement_timestamp_s_{0};
 
   uint8_t pairing_code_[4]{0x00, 0x00, 0x00, 0x00};

@@ -127,6 +127,9 @@ void Powerpal::setup() {
     } else {
       ESP_LOGE(TAG, "Error reading daily_pulses (%d)", err);
     }
+    uint32_t stored_day = 0;
+    if (nvs_get_u32(this->nvs_handle_, "daily_day", &stored_day) == ESP_OK)
+      this->daily_day_ = stored_day;
 
     uint64_t stored_total = 0;
     esp_err_t err = nvs_get_u64(this->nvs_handle_, "total", &stored_total);
@@ -730,22 +733,36 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
   }
 #endif
   // ESPHome's own conversion, which applies the configured time zone; C's localtime() may not.
-  int today = ESPTime::from_epoch_local(interval_start).day_of_year;
+  ESPTime interval_local = ESPTime::from_epoch_local(interval_start);
 
-  // 3) First-measurement vs midnight-rollover
-  if (this->day_of_last_measurement_ == 0) {
-    this->day_of_last_measurement_ = today;
-  } else if (this->day_of_last_measurement_ != today) {
-    this->day_of_last_measurement_ = today;
-    this->daily_pulses_ = 0;
-    if (this->nvs_ok_) {
-      ESP_LOGD(TAG, "NVS rollover commit at day change, resetting daily_pulses");
-      nvs_erase_key(this->nvs_handle_, "daily");
-      nvs_commit(this->nvs_handle_);
-      this->last_commit_ts_ = millis() / 1000;
-      this->last_pulses_for_threshold_ = this->total_pulses_;
-      ++this->nvsc_commit_count_;
+  // 3) Start of a new day. daily_day_ comes back from NVS with the daily total, so this also
+  // catches a midnight that passed while the ESP32 was off. Neither clock giving a believable
+  // date (e.g. just after boot, with the Powerpal's clock reset) leaves the day as it was.
+  if (interval_local.is_valid()) {
+    uint32_t today = uint32_t(interval_local.year) * 1000 + interval_local.day_of_year;
+    if (this->daily_day_ == 0) {
+      // First ever reading, or the first since upgrading from firmware that didn't store it.
+      this->daily_day_ = today;
+      if (this->nvs_ok_) {
+        nvs_set_u32(this->nvs_handle_, "daily_day", today);
+        nvs_commit(this->nvs_handle_);
+      }
+    } else if (this->daily_day_ != today) {
+      this->daily_day_ = today;
+      this->daily_pulses_ = 0;
+      if (this->nvs_ok_) {
+        ESP_LOGD(TAG, "NVS rollover commit at day change, resetting daily_pulses");
+        nvs_erase_key(this->nvs_handle_, "daily");
+        nvs_set_u32(this->nvs_handle_, "daily_day", today);
+        nvs_commit(this->nvs_handle_);
+        this->last_commit_ts_ = millis() / 1000;
+        this->last_pulses_for_threshold_ = this->total_pulses_;
+        ++this->nvsc_commit_count_;
+      }
     }
+  } else {
+    ESP_LOGW(TAG, "No believable date for this reading (Powerpal time %u); keeping it in the current day",
+             static_cast<unsigned>(t32));
   }
 
   // 4) Read pulse count for this interval
