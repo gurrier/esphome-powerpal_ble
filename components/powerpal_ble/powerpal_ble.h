@@ -159,6 +159,11 @@ class Powerpal : public esphome::ble_client::BLEClientNode, public Component {
   // anything like "current" power, so the power calc is skipped for that one sample.
   static constexpr uint32_t MAX_PLAUSIBLE_POWER_INTERVAL_S = 300;
 
+  // How far the Powerpal's clock may disagree with ours before its reading timestamps are no
+  // longer trusted to say which day a reading belongs to. Readings normally arrive a few
+  // seconds after their interval ends, so a sane clock is well inside this.
+  static constexpr long long MAX_POWERPAL_CLOCK_SKEW_S = 600;
+
   // Ring buffer of recently-processed (timestamp, pulses) pairs. The Powerpal
   // occasionally re-delivers a measurement it already sent us — observed in the
   // field as an exact repeat of both fields, roughly 1-2x/week — most likely a

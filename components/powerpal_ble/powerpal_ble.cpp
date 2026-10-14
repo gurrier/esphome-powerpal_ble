@@ -2,6 +2,7 @@
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/time.h"
 
 #include <nvs_flash.h>
 #include <nvs.h>
@@ -711,29 +712,25 @@ void Powerpal::parse_measurement_(const uint8_t *data, uint16_t length) {
                  (uint32_t(data[3]) << 24);
   time_t unix_time = time_t(t32);
 
-  // 2) Determine day-of-year for rollover
-  int today = 0;
-  bool have_valid_day = false;
+  // 2) Which day this reading belongs to. A reading covers the interval *starting* at its
+  // timestamp and only arrives once that interval has ended, so the 23:59 reading lands at
+  // about 00:00:05. Going by arrival time put each day's last interval into the next day.
+  time_t interval_start = unix_time;
 #ifdef USE_TIME
   if (this->time_.has_value() && *this->time_ != nullptr) {
     auto *time_comp = *this->time_;
-    auto now = time_comp->now();
-    if (now.is_valid()) {
-      today = now.day_of_year;
-      have_valid_day = true;
-    } else {
-      ESP_LOGV(TAG, "RTC time invalid, using measurement timestamp");
+    if (time_comp->now().is_valid()) {
+      // Our clock is the authority. The Powerpal's timestamp is exact while its own clock
+      // agrees with ours; if that has drifted or reset, estimate the start from arrival.
+      time_t expected_start = time_comp->timestamp_now() - time_t(this->reading_batch_size_[0]) * 60;
+      long long skew = static_cast<long long>(expected_start) - static_cast<long long>(unix_time);
+      if (skew > MAX_POWERPAL_CLOCK_SKEW_S || skew < -MAX_POWERPAL_CLOCK_SKEW_S)
+        interval_start = expected_start;
     }
   }
 #endif
-  if (!have_valid_day) {
-    struct tm *tm_info = ::localtime(&unix_time);
-    if (tm_info == nullptr) {
-      ESP_LOGW(TAG, "localtime conversion failed for timestamp %u", static_cast<unsigned>(t32));
-      return;
-    }
-    today = tm_info->tm_yday + 1;
-  }
+  // ESPHome's own conversion, which applies the configured time zone; C's localtime() may not.
+  int today = ESPTime::from_epoch_local(interval_start).day_of_year;
 
   // 3) First-measurement vs midnight-rollover
   if (this->day_of_last_measurement_ == 0) {
