@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2025-2026 gurrier <https://github.com/gurrier>
+# SPDX-FileCopyrightText: 2022 WeekendWarrior1 <https://github.com/WeekendWarrior1>
+# SPDX-License-Identifier: GPL-3.0-only
 import esphome.codegen as cg
 from esphome.components import ble_client
 

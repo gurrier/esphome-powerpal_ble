@@ -483,3 +483,9 @@ Test the decoded results on a computer with curl installed:
 ```
 curl -H "Authorization: <YOUR_API_KEY>" https://readings.powerpal.net/api/v1/device/<YOUR_DEVICE_ID>
 ```
+
+## Licence
+
+GPL-3.0-only. Copyright 2025-2026 [gurrier](https://github.com/gurrier). The full text is in [LICENSE.txt](LICENSE.txt).
+
+Portions copyright WeekendWarrior1, muneeb1990, Tatham Oddie and ESPHome; see [NOTICE](NOTICE).

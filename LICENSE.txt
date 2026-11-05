@@ -631,13 +631,15 @@ to attach them to the start of each source file to most effectively
 state the exclusion of warranty; and each file should have at least
 the "copyright" line and a pointer to where the full notice is found.
 
-    <one line to give the program's name and a brief idea of what it does.>
-    Copyright (C) <year>  <name of author>
+    powerpal_ble: an ESPHome component that reads energy data from a Powerpal monitor over Bluetooth LE.
+    Copyright (C) 2025-2026 gurrier <https://github.com/gurrier>
+    Copyright (C) 2022 WeekendWarrior1 <https://github.com/WeekendWarrior1>
+    Copyright (C) 2022-2023 muneeb1990 <https://github.com/muneeb1990>
+    Copyright (C) 2022 Tatham Oddie <https://github.com/tathamoddie>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+    the Free Software Foundation, version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -652,7 +654,10 @@ Also add information on how to contact you by electronic and paper mail.
   If the program does terminal interaction, make it output a short
 notice like this when it starts in an interactive mode:
 
-    <program>  Copyright (C) <year>  <name of author>
+    powerpal_ble  Copyright (C) 2025-2026 gurrier <https://github.com/gurrier>
+    Copyright (C) 2022 WeekendWarrior1 <https://github.com/WeekendWarrior1>
+    Copyright (C) 2022-2023 muneeb1990 <https://github.com/muneeb1990>
+    Copyright (C) 2022 Tatham Oddie <https://github.com/tathamoddie>
     This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
     This is free software, and you are welcome to redistribute it
     under certain conditions; type `show c' for details.

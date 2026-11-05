@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025-2026 gurrier <https://github.com/gurrier>
+// SPDX-FileCopyrightText: 2022 WeekendWarrior1 <https://github.com/WeekendWarrior1>
+// SPDX-FileCopyrightText: 2022-2023 muneeb1990 <https://github.com/muneeb1990>
+// SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 
 #include "esphome/core/component.h"
