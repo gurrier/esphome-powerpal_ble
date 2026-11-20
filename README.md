@@ -3,6 +3,12 @@ _This repository is not affiliated with Powerpal.  This code builds on previous 
 # powerpal_ble
 Collection of code, tools and documentation for data retrieval over BLE from your Powerpal.
 
+> **No ESP32? Try [Powerpal Direct](https://github.com/gurrier/HA-Powerpal-direct).** It connects
+> Home Assistant to the Powerpal over Bluetooth itself, through a local adapter or any ESPHome
+> Bluetooth proxy, recovers missed minutes from the Powerpal's history, uploads to Powerpal's cloud
+> if you want, and takes over this gateway's entities and history at setup. In the Marketplace
+> (HACS), search "Powerpal Direct". This component continues to work as before.
+
 ☕ If this integration's useful to you, [buy me a coffee](https://ko-fi.com/gurrier).
 
 [*Home Assistant Community Discussion*](https://community.home-assistant.io/t/powerpal-smart-energy-monitor/263713/126)
